@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rambla_description</name>
+  <version>0.0.1</version>
+  <description>Rambla robot description: xacro chassis, wheels, caster, LiDAR, camera, IMU, and bumper for Gazebo/ROS2.</description>
+  <maintainer email="jackdemarco.jd@gmail.com">Jack Demarco</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

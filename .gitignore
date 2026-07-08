@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Env/secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+.next/
+npm-debug.log*
+
+# ROS 2 build artifacts
+robot/ros2_ws/build/
+robot/ros2_ws/install/
+robot/ros2_ws/log/
+
+# Gazebo / sim generated files
+*.log

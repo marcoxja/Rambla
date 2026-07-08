@@ -1,0 +1,20 @@
+safety_node:
+  ros__parameters:
+    # Ranges below this are the LiDAR seeing its own front bumper, not a
+    # real obstacle - confirmed live in sim (2026-07-08): a handful of
+    # samples right at angle 0 read ~0.24-0.27m even in open space, since
+    # base_scan sits behind body center (see safety_monitor.py's
+    # DEFAULT_MIN_VALID_RANGE_M for the full geometry explanation). Must
+    # stay below stop_distance_m.
+    min_valid_range_m: 0.3
+    # Forward motion blocked when the front-arc LiDAR minimum (after
+    # excluding self-detection below min_valid_range_m) drops below this.
+    # 0.35m sits comfortably inside the apartment world's narrowest
+    # doorway gap (0.9m) and outside the robot's base diameter (0.349m,
+    # see rambla_description/urdf/params.xacro), so it stops short of
+    # furniture/walls without being so cautious the robot can't pass
+    # through a doorway. See apartment_world.sdf for room/doorway geometry.
+    stop_distance_m: 0.35
+    # +/- this many degrees either side of straight ahead (angle 0) counts
+    # as "front" for the stop-distance check.
+    front_arc_deg: 30

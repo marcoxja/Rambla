@@ -1,0 +1,68 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    two_d_mode: true          # Rambla is a ground diff-drive robot; a 3D estimate
+                              # would just let IMU z/roll/pitch noise leak into a
+                              # useless z estimate. Revisit only if a 3D use case
+                              # (e.g. stairs/ramps) appears.
+    publish_tf: true          # ekf_filter_node becomes sole owner of the
+                              # odom->base_footprint transform. The Gazebo
+                              # OdometryPublisher plugin's <tf_topic> has been
+                              # removed from plugins.xacro to avoid two nodes
+                              # fighting over the same transform - do not re-add
+                              # both at once.
+    map_frame: map            # Unused while world_frame is odom; present for
+                              # forward-compat with a future map-frame EKF/AMCL.
+    odom_frame: odom
+    base_link_frame: base_footprint   # Matches OdometryPublisher's robot_base_frame.
+    world_frame: odom          # Local (odom-frame) fusion only - no map-frame
+                              # fusion until a map-frame source (AMCL/SLAM) exists.
+
+    odom0: /odom_fixed   # frame_id_fixer's corrected republish of /odom -
+                         # see rambla_localization/frame_id_fixer.py
+    # x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+    # Position/orientation from wheel odometry are exactly what this filter is
+    # meant to correct - feeding them back in would circularly reinforce drift
+    # instead of fixing it. Only linear x/y velocity and yaw rate are trusted
+    # from wheel odometry (standard robot_localization wheel-odom pattern).
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: /imu/data_fixed   # frame_id_fixer's corrected republish of
+                            # /imu/data - see rambla_localization/frame_id_fixer.py
+    # x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az
+    imu0_config: [false, false, false,
+                   true,  true,  true,
+                   false, false, false,
+                   true,  true,  true,
+                   true,  true,  false]
+    # Orientation and angular velocity fully trusted - IMU is the best absolute
+    # orientation reference available pre-magnetometer/pre-AMCL, and gyro-based
+    # yaw rate is far less susceptible to wheel slip than wheel odometry.
+    # Linear acceleration x/y is tentatively trusted; this is a tunable, not a
+    # settled choice (see SNS-012 - exact sensor-uncertainty representation is
+    # deferred) - set to false,false if it introduces noise problems in testing.
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true
+
+    use_control: false
+    print_diagnostics: true
+    debug: false
+
+    # Covariance values are NOT hand-set here. The Gazebo OdometryPublisher /
+    # imu sensor plugins publish all-zero covariance (confirmed - see
+    # robot/pre-slam-audit.md), which starves the filter of any real
+    # per-sensor trust signal and was found to cause /odometry/filtered to
+    # diverge 18+ meters under real motion. Fixed upstream of this config:
+    # rambla_localization/frame_id_fixer.py now injects hand-picked,
+    # placeholder static covariance onto /odom_fixed and /imu/data_fixed
+    # (the topics odom0/imu0 below actually point at) before this filter
+    # ever sees them.

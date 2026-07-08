@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Rambla Control Panel</title>
+  <link rel="stylesheet" href="/css/layout.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="tab-bar">
+      <button class="tab-button active" data-tab="drive">Drive</button>
+      <button class="tab-button" data-tab="sensors">Sensors</button>
+      <button class="tab-button" data-tab="nodes">Nodes</button>
+      <span id="connection-indicator" class="disconnected">●</span>
+    </nav>
+
+    <main>
+      <section id="tab-drive" class="tab-panel active">
+        <div id="camera-container">
+          <img id="camera-feed" src="/camera/stream" alt="Robot camera feed">
+          <canvas id="joystick-left" class="joystick" data-axis="linear"></canvas>
+          <canvas id="joystick-right" class="joystick" data-axis="angular"></canvas>
+        </div>
+      </section>
+
+      <section id="tab-sensors" class="tab-panel">
+        <div class="debug-grid">
+          <div class="debug-card">
+            <h2>LiDAR (/scan_fixed)</h2>
+            <canvas id="scan-canvas" width="320" height="320"></canvas>
+          </div>
+          <div class="debug-card">
+            <h2>IMU (/imu/data_fixed)</h2>
+            <dl id="imu-readout" class="readout"></dl>
+          </div>
+          <div class="debug-card">
+            <h2>Odometry (/odometry/filtered)</h2>
+            <dl id="odom-readout" class="readout"></dl>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-nodes" class="tab-panel">
+        <div class="debug-grid">
+          <div class="debug-card">
+            <h2>Active Nodes</h2>
+            <ul id="node-list"></ul>
+          </div>
+          <div class="debug-card">
+            <h2>Topics</h2>
+            <table id="topic-table">
+              <thead><tr><th>Topic</th><th>Last seen</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/ws-client.js"></script>
+  <script src="/js/joystick.js"></script>
+  <script src="/js/camera.js"></script>
+  <script src="/js/debug-tabs.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
