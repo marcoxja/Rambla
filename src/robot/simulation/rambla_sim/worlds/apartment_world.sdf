@@ -1,0 +1,246 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="apartment_world">
+    <!--
+      Simple 3-room apartment, hand-authored as static box primitives:
+        - Living room:  x in [0, 5],  y in [0, 6]
+        - Hallway/room: x in [5, 8],  y in [0, 3]
+        - Bedroom:      x in [5, 8],  y in [3, 6]
+      One vertical partition at x=5 (living room | hallway+bedroom) and one
+      horizontal partition at y=3 (hallway | bedroom), each split into two
+      segments with a ~0.9m gap to form a doorway. Wall thickness 0.1m,
+      height 2.4m. Units: meters.
+    -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"></plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"></plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"></plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"></plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"></plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>12 8</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>12 8</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.55 0.45 0.35 1</ambient>
+            <diffuse>0.55 0.45 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ****************** WALLS ****************** -->
+    <!-- Reusable wall macro pattern hand-expanded below: each wall is a single
+         static model with one box link. Pose is the segment's center; size is
+         (length, thickness, height). -->
+
+    <!-- Outer perimeter: 0<=x<=8, 0<=y<=6 -->
+    <model name="wall_ext_south">
+      <static>true</static>
+      <pose>4 0 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>8 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>8 0.1 2.4</size></box></geometry>
+          <material><ambient>0.65 0.75 0.85 1</ambient><diffuse>0.65 0.75 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_ext_north">
+      <static>true</static>
+      <pose>4 6 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>8 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>8 0.1 2.4</size></box></geometry>
+          <material><ambient>0.65 0.75 0.85 1</ambient><diffuse>0.65 0.75 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_ext_west">
+      <static>true</static>
+      <pose>0 3 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>6 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>6 0.1 2.4</size></box></geometry>
+          <material><ambient>0.65 0.75 0.85 1</ambient><diffuse>0.65 0.75 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_ext_east">
+      <static>true</static>
+      <pose>8 3 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>6 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>6 0.1 2.4</size></box></geometry>
+          <material><ambient>0.65 0.75 0.85 1</ambient><diffuse>0.65 0.75 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Interior partition at x=5, separating living room (x<5) from
+         hallway+bedroom (x>5). Split into two segments with a 0.9m doorway
+         gap centered at y=1.5 (opens off the living room into the hallway). -->
+    <model name="wall_int_vertical_a">
+      <static>true</static>
+      <pose>5 0.525 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.05 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.05 0.1 2.4</size></box></geometry>
+          <material><ambient>0.7 0.8 0.65 1</ambient><diffuse>0.7 0.8 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_int_vertical_b">
+      <static>true</static>
+      <pose>5 3.975 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>4.05 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>4.05 0.1 2.4</size></box></geometry>
+          <material><ambient>0.7 0.8 0.65 1</ambient><diffuse>0.7 0.8 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Interior partition at y=3 (x in [5,8]), separating hallway (y<3) from
+         bedroom (y>3). Split into two segments with a 0.9m doorway gap
+         centered at x=6.5. -->
+    <model name="wall_int_horizontal_a">
+      <static>true</static>
+      <pose>5.525 3 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.05 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.05 0.1 2.4</size></box></geometry>
+          <material><ambient>0.7 0.8 0.65 1</ambient><diffuse>0.7 0.8 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_int_horizontal_b">
+      <static>true</static>
+      <pose>7.475 3 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.05 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.05 0.1 2.4</size></box></geometry>
+          <material><ambient>0.7 0.8 0.65 1</ambient><diffuse>0.7 0.8 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ****************** FURNITURE OBSTACLES ****************** -->
+    <!-- Plain static primitives, placeholder geometry only (DESIGN_SPEC
+         PHY-004 philosophy applied to world furniture too: navigation-relevant
+         obstacles, not final decor). -->
+
+    <model name="obstacle_sofa">
+      <static>true</static>
+      <pose>1.2 5.2 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.8 0.7 0.8</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.8 0.7 0.8</size></box></geometry>
+          <material><ambient>0.5 0.3 0.3 1</ambient><diffuse>0.5 0.3 0.3 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_coffee_table">
+      <static>true</static>
+      <pose>1.5 3.8 0.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.8 0.5 0.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.8 0.5 0.4</size></box></geometry>
+          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_bookshelf">
+      <static>true</static>
+      <pose>4.7 0.3 0.9 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.3 1.2 1.8</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 1.2 1.8</size></box></geometry>
+          <material><ambient>0.35 0.25 0.15 1</ambient><diffuse>0.35 0.25 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_bed">
+      <static>true</static>
+      <pose>7.2 4.8 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.4 2.0 0.6</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.4 2.0 0.6</size></box></geometry>
+          <material><ambient>0.6 0.6 0.7 1</ambient><diffuse>0.6 0.6 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_nightstand">
+      <static>true</static>
+      <pose>7.7 3.4 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.4 0.4 0.5</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.4 0.4 0.5</size></box></geometry>
+          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_hallway_box">
+      <static>true</static>
+      <pose>6.5 1.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.25</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.25</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

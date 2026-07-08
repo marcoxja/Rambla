@@ -54,20 +54,44 @@ gh repo clone "$PUBLIC_REPO" "$SCRATCH_DIR/public" -- --quiet
 cd "$SCRATCH_DIR/public"
 git checkout -B "$PUBLIC_BRANCH" "origin/$PUBLIC_BRANCH" --quiet
 
-log "Copying allowlisted paths"
+log "Copying allowlisted paths (git-tracked files only)"
+# Only files tracked by git in the private repo are ever copied. This means
+# untracked/gitignored content (stray .venv/, .DS_Store, build artifacts,
+# local scratch files, etc.) can never leak into the public repo, regardless
+# of what happens to be sitting in the working tree.
 for entry in "${ALLOWLIST[@]}"; do
   src="$PRIVATE_REPO_ROOT/$entry"
-  dst="$SCRATCH_DIR/public/$entry"
   if [ ! -e "$src" ]; then
     echo "  (skip) $entry does not exist in private repo"
     continue
   fi
+
+  tracked_files=()
+  while IFS= read -r -d '' rel_path; do
+    tracked_files+=("$rel_path")
+  done < <(git -C "$PRIVATE_REPO_ROOT" ls-files -z -- "$entry")
+
+  if [ "${#tracked_files[@]}" -eq 0 ]; then
+    echo "  (skip) $entry has no git-tracked files"
+    continue
+  fi
+
   if [ -d "$src" ]; then
-    mkdir -p "$dst"
-    rsync -a --delete "$src/" "$dst/"
-    echo "  copied dir  $entry/"
+    dst="$SCRATCH_DIR/public/$entry"
+    rm -rf "$dst"
+  fi
+
+  count=0
+  for rel_path in "${tracked_files[@]}"; do
+    dst_file="$SCRATCH_DIR/public/$rel_path"
+    mkdir -p "$(dirname "$dst_file")"
+    rsync -a "$PRIVATE_REPO_ROOT/$rel_path" "$dst_file"
+    count=$((count + 1))
+  done
+
+  if [ -d "$src" ]; then
+    echo "  copied dir  $entry/ ($count tracked file(s))"
   else
-    rsync -a "$src" "$dst"
     echo "  copied file $entry"
   fi
 done
@@ -193,15 +217,32 @@ if [ "$DO_PUSH" = false ]; then
   exit 0
 fi
 
+cd "$SCRATCH_DIR/public"
+SHORT_SHA="$(git -C "$PRIVATE_REPO_ROOT" rev-parse --short HEAD)"
+SYNC_DATE="$(date +%Y-%m-%d)"
+DRAFT_MSG="Sync from rambla-private @ ${SHORT_SHA} (${SYNC_DATE})"
+
+log "Commit message confirmation"
+echo "Draft commit message:"
+echo "  ${DRAFT_MSG}"
+echo
+echo "Press Enter to accept the draft, or type a replacement message to use instead:"
+read -r -p "> " msg_reply
+COMMIT_MSG="${DRAFT_MSG}"
+if [ -n "$msg_reply" ]; then
+  COMMIT_MSG="$msg_reply"
+fi
+
+echo
+echo "Final commit message:"
+echo "  ${COMMIT_MSG}"
+
 log "Ready to push to $PUBLIC_REPO ($PUBLIC_BRANCH)"
 echo "This will commit and push the changes shown above."
 read -r -p "Type PUSH to confirm, anything else to abort: " push_confirm
 [ "$push_confirm" = "PUSH" ] || fail "Push aborted by user (confirmation not entered)."
 
-cd "$SCRATCH_DIR/public"
-SHORT_SHA="$(git -C "$PRIVATE_REPO_ROOT" rev-parse --short HEAD)"
-SYNC_DATE="$(date +%Y-%m-%d)"
-git commit -m "Sync from rambla-private @ ${SHORT_SHA} (${SYNC_DATE})"
+git commit -m "$COMMIT_MSG"
 git push origin "$PUBLIC_BRANCH"
 
 log "Done"
