@@ -52,7 +52,7 @@ Visualization Manager:
       Size (m): 0.05
       Style: Flat Squares
       Topic:
-        Value: /scan_fixed
+        Value: /scan
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true

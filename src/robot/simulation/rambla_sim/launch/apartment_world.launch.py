@@ -3,21 +3,61 @@ import os
 import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    LogInfo,
+    OpaqueFunction,
+    RegisterEventHandler,
+    Shutdown,
+)
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+# Per-world spawn defaults, used whenever the spawn_x/y/z launch args are left
+# at their default (empty string). Keyed by the `world` launch-arg value,
+# which is also the .sdf filename stem and the <world name> inside that file
+# (see the invariant note in launch_setup below).
+WORLD_SPAWN_DEFAULTS = {
+    # Living room, near the original 3-room layout's entrance.
+    'apartment_world': (2.0, 2.0, 0.05),
+    # Living room open floor, clear of the sofa/coffee-table/TV-stand
+    # (upstream house.sdf itself documents this as the robot spawn area:
+    # x=-6 to -2, y=1.5 to 4.5).
+    'house': (-4.0, 3.0, 0.05),
+}
 
-def generate_launch_description():
+
+def launch_setup(context, *args, **kwargs):
     sim_pkg_share = get_package_share_directory('rambla_sim')
     description_pkg_share = get_package_share_directory('rambla_description')
     localization_pkg_share = get_package_share_directory('rambla_localization')
     safety_pkg_share = get_package_share_directory('rambla_safety')
 
-    world_path = os.path.join(sim_pkg_share, 'worlds', 'apartment_world.sdf')
+    # Invariant relied on below and by the bridge's bumper contact topic
+    # paths: the `world` launch-arg value, the worlds/<world>.sdf filename
+    # stem, and the file's <world name="..."> must all match. Keep any new
+    # world file's <world name> equal to its filename stem.
+    world_name = LaunchConfiguration('world').perform(context)
+    world_path = os.path.join(sim_pkg_share, 'worlds', f'{world_name}.sdf')
     xacro_path = os.path.join(description_pkg_share, 'urdf', 'rambla.urdf.xacro')
     robot_description = xacro.process_file(xacro_path).toxml()
 
+    default_x, default_y, default_z = WORLD_SPAWN_DEFAULTS.get(
+        world_name, (2.0, 2.0, 0.05)
+    )
+    spawn_x = LaunchConfiguration('spawn_x').perform(context) or str(default_x)
+    spawn_y = LaunchConfiguration('spawn_y').perform(context) or str(default_y)
+    spawn_z = LaunchConfiguration('spawn_z').perform(context) or str(default_z)
+
+    # Headless (-s, server-only) by default - required over a plain SSH
+    # session with no DISPLAY. Pass gui:=true only when a real X server is
+    # reachable (e.g. DISPLAY=:0 pointed at the VM's own console via
+    # startx - see robot/simulation/CLAUDE.md) to watch the sim visually.
+    gui = LaunchConfiguration('gui').perform(context)
+    server_flag = '' if gui == 'true' else '-s '
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -26,7 +66,7 @@ def generate_launch_description():
                 'gz_sim.launch.py',
             )
         ),
-        launch_arguments={'gz_args': f'-r -s {world_path}'}.items(),
+        launch_arguments={'gz_args': f'-r {server_flag}{world_path}'}.items(),
     )
 
     robot_state_publisher = Node(
@@ -42,9 +82,9 @@ def generate_launch_description():
         arguments=[
             '-topic', 'robot_description',
             '-name', 'rambla',
-            '-x', '2.0',
-            '-y', '2.0',
-            '-z', '0.05',
+            '-x', spawn_x,
+            '-y', spawn_y,
+            '-z', spawn_z,
         ],
         output='screen',
     )
@@ -66,6 +106,15 @@ def generate_launch_description():
     #   below on the fully-qualified path matching that new attachment;
     #   verify the live path via `gz topic -l` after spawning and correct
     #   this if gz-sim's actual entity-tree naming differs.
+    bumper_left_topic = (
+        f'/world/{world_name}/model/rambla/link/bumper_left/sensor/'
+        'bumper_left/contact'
+    )
+    bumper_right_topic = (
+        f'/world/{world_name}/model/rambla/link/bumper_right/sensor/'
+        'bumper_right/contact'
+    )
+
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -78,41 +127,32 @@ def generate_launch_description():
             '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
             '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
             '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
-            (
-                '/world/apartment_world/model/rambla/link/bumper_left/sensor/'
-                'bumper_left/contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts'
-            ),
-            (
-                '/world/apartment_world/model/rambla/link/bumper_right/sensor/'
-                'bumper_right/contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts'
-            ),
+            f'{bumper_left_topic}@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts',
+            f'{bumper_right_topic}@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts',
         ],
         remappings=[
             ('/model/rambla/odometry', '/odom'),
-            (
-                '/world/apartment_world/model/rambla/link/bumper_left/sensor/bumper_left/contact',
-                '/bumper_left/contact',
-            ),
-            (
-                '/world/apartment_world/model/rambla/link/bumper_right/sensor/bumper_right/contact',
-                '/bumper_right/contact',
-            ),
+            (bumper_left_topic, '/bumper_left/contact'),
+            (bumper_right_topic, '/bumper_right/contact'),
         ],
         output='screen',
     )
 
-    # Rewrites frame_id/child_frame_id on /odom, /imu/data, /scan, and
-    # /camera/* (gz-sim prepends the model name, e.g. "rambla/odom", which
-    # doesn't match robot_state_publisher's plain URDF-derived TF tree), and
-    # injects placeholder non-zero covariance on /odom and /imu/data so
-    # ekf_node has a real per-sensor trust signal - see frame_id_fixer.py
-    # and robot/pre-slam-audit.md. Sim-only shim: dropped (not ported) on
-    # real hardware, whose driver nodes publish plain frame_ids and real
-    # covariance directly.
-    frame_id_fixer = Node(
+    # Injects placeholder non-zero covariance onto /odom and /imu/data so
+    # ekf_node has a real per-sensor trust signal (gz-sim's OdometryPublisher
+    # and IMU sensor systems publish all-zero covariance) - see
+    # covariance_injector.py and robot/pre-slam-audit.md. Also rewrites
+    # /odom's frame_id/child_frame_id to the plain names, since the
+    # OdometryPublisher plugin can't take <gz_frame_id> (sensor-level only,
+    # unlike the LiDAR/IMU sensors). /scan and /camera/* no longer need any
+    # republish here: plugins.xacro's <gz_frame_id>/<optical_frame_id> tags
+    # set plain frame_ids on those topics at the source. Sim-only shim:
+    # dropped (not ported) on real hardware, whose driver nodes publish
+    # plain frame_ids and real covariance directly.
+    covariance_injector = Node(
         package='rambla_localization',
-        executable='frame_id_fixer',
-        name='frame_id_fixer',
+        executable='covariance_injector',
+        name='covariance_injector',
         output='screen',
         parameters=[{'use_sim_time': True}],
     )
@@ -128,8 +168,8 @@ def generate_launch_description():
     )
 
     # Local collision-safety reflex (DESIGN_SPEC.md LOC-001/LOC-002/LOC-004,
-    # SAF-001-003): overrides /cmd_vel on imminent collision using
-    # /scan_fixed + bumper contact, no map/server dependency. Included here
+    # SAF-001-003): overrides /cmd_vel on imminent collision using raw
+    # /scan + bumper contact, no map/server dependency. Included here
     # (not left standalone like control_panel.launch.py) because it depends
     # on sim sensor topics existing, same ownership relationship as ekf.
     # Subscribes to /cmd_vel_raw (published by e.g. rambla_traversal) and
@@ -141,16 +181,99 @@ def generate_launch_description():
         )
     )
 
-    # gz_sim needs to be up before robot_state_publisher/spawn_robot/bridge/
-    # frame_id_fixer/ekf/safety have anything to attach to or bridge from.
-    # ROS2 launch's default parallel start has been fast enough so far that
-    # this hasn't caused a failure, but nothing guarantees that on a slower
-    # machine or heavier world - see robot/pre-slam-audit.md item 5. A short
-    # TimerAction is the simplest guard consistent with this repo's other
-    # launch files (none use the more involved RegisterEventHandler pattern).
-    delayed_bringup = TimerAction(
-        period=3.0,
-        actions=[robot_state_publisher, spawn_robot, bridge, frame_id_fixer, ekf, safety],
+    # gz_sim needs to be up before anything else attaches to or bridges from
+    # it. Rather than a fixed TimerAction guess, bringup is gated on two
+    # real readiness signals in sequence:
+    #   1. robot_state_publisher's process has started (so its latched
+    #      robot_description topic exists for spawn_robot to read).
+    #   2. spawn_robot (ros_gz_sim create) has exited successfully (so the
+    #      entity actually exists in the running gz world before bridge/
+    #      covariance_injector/ekf/safety attach to gz-side topics/TF).
+    # This event-driven approach removes the race entirely instead of
+    # hoping a fixed delay is long enough on a slower machine or heavier
+    # world - see robot/pre-slam-audit.md item 5.
+
+    # Gate 1: spawn the robot only once robot_state_publisher's process has
+    # started, so `create -topic robot_description` reliably finds RSP's
+    # transient-local (latched) robot_description publisher rather than racing
+    # its creation.
+    spawn_after_rsp = RegisterEventHandler(
+        OnProcessStart(
+            target_action=robot_state_publisher,
+            on_start=[spawn_robot],
+        )
     )
 
-    return LaunchDescription([gz_sim, delayed_bringup])
+    # Gate 2: bring up the bridge and all downstream ROS nodes only after the
+    # robot has actually spawned. `ros_gz_sim create` blocks until the gz
+    # server is up, spawns the entity, then exits 0 - so its exit is the real
+    # readiness signal (this ros_gz_sim build has no `-timeout` flag to lean
+    # on). On a nonzero exit the spawn failed, so we fail visibly by shutting
+    # the whole bringup down rather than starting nodes that would silently
+    # hang forever on topics that never arrive. The bridge waits for full
+    # spawn (not just server-up) as a deliberate simplicity choice: it only
+    # needs the gz server, which is guaranteed up by the time create exits,
+    # and splitting it onto a separate gate would need another readiness
+    # signal for negligible benefit.
+    def _bringup_on_spawn_exit(event, context):
+        if event.returncode == 0:
+            return [bridge, covariance_injector, ekf, safety]
+        return [
+            LogInfo(
+                msg=(
+                    'robot spawn (ros_gz_sim create) exited with code '
+                    f'{event.returncode}; aborting bringup.'
+                )
+            ),
+            Shutdown(reason='robot spawn failed'),
+        ]
+
+    bringup_after_spawn = RegisterEventHandler(
+        OnProcessExit(
+            target_action=spawn_robot,
+            on_exit=_bringup_on_spawn_exit,
+        )
+    )
+
+    return [
+        gz_sim,
+        robot_state_publisher,
+        spawn_after_rsp,
+        bringup_after_spawn,
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'world',
+            default_value='apartment_world',
+            description=(
+                "World to load, by worlds/<world>.sdf filename stem "
+                "(must equal that file's <world name>): 'apartment_world' "
+                "(default, hand-authored 3-room layout) or 'house' "
+                '(adopted multi-room apartment, see house.sdf header).'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'spawn_x', default_value='',
+            description='Robot spawn X (m). Empty = per-world default.',
+        ),
+        DeclareLaunchArgument(
+            'spawn_y', default_value='',
+            description='Robot spawn Y (m). Empty = per-world default.',
+        ),
+        DeclareLaunchArgument(
+            'spawn_z', default_value='',
+            description='Robot spawn Z (m). Empty = per-world default.',
+        ),
+        DeclareLaunchArgument(
+            'gui', default_value='false',
+            description=(
+                'true = run gz sim with its GUI attached (needs a real '
+                'DISPLAY, e.g. the VM console via startx); false (default) '
+                '= headless server-only, required over plain SSH.'
+            ),
+        ),
+        OpaqueFunction(function=launch_setup),
+    ])

@@ -1,7 +1,17 @@
-"""rclpy side of the control panel: publishes /cmd_vel from browser joystick
-input (with a deadman watchdog so a dropped connection can't leave the robot
-driving forever - see deadman.py), and republishes sensor/camera/diagnostic
-data for server.py's websocket and MJPEG endpoints to consume.
+"""rclpy side of the control panel: publishes manual drive intent to
+/cmd_vel_teleop from browser joystick input (with a deadman watchdog so a
+dropped connection can't leave the robot driving forever - see deadman.py),
+and republishes sensor/camera/diagnostic data for server.py's websocket and
+MJPEG endpoints to consume.
+
+/cmd_vel_teleop is *intent*, not the actuator-facing command: rambla_safety's
+SafetyNode is the sole final /cmd_vel publisher and arbitrates AUTO
+(/cmd_vel_raw, from rambla_traversal) vs MANUAL (/cmd_vel_teleop) authority -
+see rambla_safety/control_authority.py. This node only publishes while the
+deadman is actively receiving fresh commands (is_active), plus exactly one
+final zero on the tick it goes inactive, so SafetyNode's own manual-liveness
+timeout sees real silence promptly instead of a forever-repeating stream of
+zeros that would keep MANUAL authority engaged after disconnect.
 
 Runs rclpy.spin on a background thread since rclpy is not asyncio-native;
 FastAPI handlers call this node's methods directly (publishers are
@@ -26,14 +36,18 @@ CMD_VEL_RATE_HZ = 20.0
 SENSOR_PUBLISH_RATE_HZ = 8.0
 DIAGNOSTICS_RATE_HZ = 1.0
 
-# Frame-corrected topics from rambla_localization's frame_id_fixer, not the
-# raw gz-sim topics - see frame_id_fixer.py for why the raw ones have wrong
-# frame_ids. /odometry/filtered is the EKF's fused output (ekf.yaml), a
-# better "ground truth" position readout than raw /odom_fixed.
-SCAN_TOPIC = '/scan_fixed'
+# /scan and /camera/image_raw are the raw gz-sim topics - plugins.xacro's
+# <gz_frame_id>/<optical_frame_id> tags already give them plain frame_ids at
+# the source, so no downstream frame-ID republish is needed. /imu/data_fixed
+# is rambla_localization's covariance_injector republish (still needed for
+# non-zero covariance - see covariance_injector.py). /odometry/filtered is
+# the EKF's fused output (ekf.yaml), a better "ground truth" position readout
+# than raw /odom.
+SCAN_TOPIC = '/scan'
 IMU_TOPIC = '/imu/data_fixed'
 ODOM_TOPIC = '/odometry/filtered'
-CAMERA_TOPIC = '/camera/image_raw_fixed'
+CAMERA_TOPIC = '/camera/image_raw'
+CMD_VEL_TELEOP_TOPIC = '/cmd_vel_teleop'
 
 CAMERA_JPEG_QUALITY = 70
 
@@ -45,6 +59,7 @@ class ControlPanelNode(Node):
 
         self._cv_bridge = CvBridge()
         self._deadman = DeadmanTimer(clock=time.monotonic)
+        self._teleop_was_active = False
         self._latest_jpeg = None
         self._latest_jpeg_lock = threading.Lock()
 
@@ -56,7 +71,7 @@ class ControlPanelNode(Node):
         self.on_odom = None
         self.on_diagnostics = None
 
-        self._cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self._cmd_vel_pub = self.create_publisher(Twist, CMD_VEL_TELEOP_TOPIC, 10)
         self.create_timer(1.0 / CMD_VEL_RATE_HZ, self._publish_cmd_vel)
 
         self.create_subscription(LaserScan, SCAN_TOPIC, self._on_scan, 10)
@@ -90,11 +105,22 @@ class ControlPanelNode(Node):
         with self._latest_jpeg_lock:
             return self._latest_jpeg
 
-    # --- outbound to /cmd_vel, at a steady rate regardless of browser
-    #     event jitter - see deadman.py's module docstring ---
+    # --- outbound to /cmd_vel_teleop, at a steady rate regardless of
+    #     browser event jitter - see deadman.py's module docstring ---
 
     def _publish_cmd_vel(self):
+        # command() must run first - it's what actually detects/applies a
+        # timeout trip (is_active alone doesn't advance the clock check).
         linear, angular = self._deadman.command()
+        active = self._deadman.is_active
+        if not active and not self._teleop_was_active:
+            # Already silent last tick and still silent - nothing new to
+            # report. Publishing zeros here forever would look, to
+            # SafetyNode's manual-liveness timeout, indistinguishable from
+            # a live operator holding still, and MANUAL authority would
+            # never release back to AUTO.
+            return
+        self._teleop_was_active = active
         msg = Twist()
         msg.linear.x = linear
         msg.angular.z = angular

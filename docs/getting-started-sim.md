@@ -26,14 +26,20 @@ each with a distinct role:
   (Physical dimensions here are placeholders per `PHY-004` in the design
   spec, not a committed form factor.)
 
-- **`rambla_sim`** — the apartment-scale scenario. A multi-room apartment
-  world plus the launch file that spawns the robot and bridges all its
+- **`rambla_sim`** — the apartment-scale scenario. Multi-room apartment
+  worlds plus the launch file that spawns the robot and bridges all its
   sensor and control topics into ROS2.
 
 ## The Apartment World
 
 `rambla_sim` launches Rambla into a multi-room apartment and exposes the
-following ROS2 topics:
+following ROS2 topics. Two worlds are available via the `world` launch
+argument: `apartment_world` (default, hand-authored 3-room layout) and
+`house` (adopted 6-room apartment layout, per `SIM-003`):
+
+```
+ros2 launch rambla_sim apartment_world.launch.py world:=house
+```
 
 | Topic | Purpose |
 |---|---|
@@ -48,8 +54,10 @@ following ROS2 topics:
 An EKF sensor-fusion node consumes these to publish a filtered odometry
 estimate, which is what localization is built on.
 
-A larger apartment world is planned as a forward enhancement — see
-`SIM-003` in the design spec.
+See `SIM-003` in the design spec and
+`RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md` for the enhancement brief this world
+was adopted against; higher-fidelity furniture geometry and further visual
+distinction are a deferred follow-up.
 
 ## The Control Panel
 

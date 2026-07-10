@@ -24,20 +24,24 @@ def generate_launch_description():
 
     # Topic list and --storage mcap match
     # .claude/internal-docs/robot/slam/plans/real-map-plan-2026-07-06.md
-    # Phase 1 exactly: the _fixed frame-corrected topics (not raw /scan,
-    # /odom, /imu/data, /camera/*), /odometry/filtered (the EKF's stable
-    # pose contract, not raw odom), and /clock (required since the Modal
-    # SLAM job runs with use_sim_time:=true and needs the bag's own
-    # simulated time base).
+    # Phase 1 exactly: raw /scan and /camera/* (plugins.xacro's
+    # <gz_frame_id>/<optical_frame_id> tags already give these plain
+    # frame_ids at the source, so no _fixed republish is needed for them
+    # anymore - Task 1 of the OOMWOO/Kaia foundation decision),
+    # /imu/data_fixed (still the covariance_injector's republish - carries
+    # non-zero covariance the raw topic lacks), /odometry/filtered (the
+    # EKF's stable pose contract, not raw odom), and /clock (required since
+    # the Modal SLAM job runs with use_sim_time:=true and needs the bag's
+    # own simulated time base).
     record_process = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'record',
             '-o', LaunchConfiguration('observation_batch_dir'),
             '--storage', 'mcap',
             '/clock',
-            '/scan_fixed',
-            '/camera/image_raw_fixed',
-            '/camera/camera_info_fixed',
+            '/scan',
+            '/camera/image_raw',
+            '/camera/camera_info',
             '/imu/data_fixed',
             '/odometry/filtered',
         ],

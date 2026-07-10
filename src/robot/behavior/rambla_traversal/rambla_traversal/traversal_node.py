@@ -1,10 +1,21 @@
-"""rclpy wrapper around WanderBehavior: subscribes to /scan_fixed, publishes
+"""rclpy wrapper around WanderBehavior: subscribes to /scan, publishes
 reactive drive commands to /cmd_vel_raw (never /cmd_vel directly - always
 passes through rambla_safety), and stops itself after a fixed time budget
 so a mapping-recording session has a clean, reproducible end. Tracks
 distance traveled via /odometry/filtered purely for the run-summary log,
 not as a stopping condition (time budget is simpler and sufficient given
 the apartment world's scale - see wander_behavior.py's module docstring).
+
+Also subscribes to /control_authority (published by rambla_safety's
+SafetyNode - see control_authority.py) and yields at this node's own
+top-level tick whenever MANUAL is engaged: this is the one place this
+node checks authority, not scattered per-command-path checks. Yielding
+just means "stop publishing" - rambla_safety's ControlAuthority already
+freezes/discards auto commands while MANUAL and won't replay a stale one
+when AUTO resumes, so this node doesn't need its own zero-on-handoff
+logic. The traversal time budget keeps counting down while paused
+(not frozen) - a deliberate simplicity choice, since it's a soft
+mapping-session length cap, not a correctness invariant.
 """
 import math
 
@@ -13,13 +24,16 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
 
 from rambla_traversal.wander_behavior import WanderBehavior
 
 CMD_RATE_HZ = 10.0
-SCAN_TOPIC = '/scan_fixed'
+SCAN_TOPIC = '/scan'
 ODOM_TOPIC = '/odometry/filtered'
 CMD_VEL_RAW_TOPIC = '/cmd_vel_raw'
+CONTROL_AUTHORITY_TOPIC = '/control_authority'
+MANUAL_MODE = 'MANUAL'
 
 # Matches the SLAM recording plan's "~30-60s, crosses one doorway" target
 # (real-map-plan-2026-07-06.md Phase 1) - long enough to reliably reach and
@@ -42,10 +56,13 @@ class TraversalNode(Node):
         self._finished = False
         self._last_position = None
         self._distance_traveled_m = 0.0
+        self._authority_mode = 'AUTO'
 
         self._cmd_pub = self.create_publisher(Twist, CMD_VEL_RAW_TOPIC, 10)
         self.create_subscription(LaserScan, SCAN_TOPIC, self._on_scan, 10)
         self.create_subscription(Odometry, ODOM_TOPIC, self._on_odom, 10)
+        self.create_subscription(
+            String, CONTROL_AUTHORITY_TOPIC, self._on_control_authority, 10)
         self.create_timer(1.0 / CMD_RATE_HZ, self._tick)
 
         self.get_logger().info(
@@ -62,8 +79,19 @@ class TraversalNode(Node):
             self._distance_traveled_m += math.hypot(dx, dy)
         self._last_position = (p.x, p.y)
 
+    def _on_control_authority(self, msg):
+        self._authority_mode = msg.data
+
     def _tick(self):
         if self._finished:
+            return
+        if self._authority_mode == MANUAL_MODE:
+            # Yield to manual control at this node's top-level boundary -
+            # don't publish; rambla_safety's ControlAuthority won't select
+            # or replay this node's commands while MANUAL anyway, but not
+            # publishing avoids fighting the arbitration timeline (see
+            # rambla_safety/control_authority.py) and matches the product
+            # intent that autonomous behavior pauses during manual takeover.
             return
 
         now = self.get_clock().now()

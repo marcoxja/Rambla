@@ -3,13 +3,14 @@
 <package format="3">
   <name>rambla_safety</name>
   <version>0.0.1</version>
-  <description>Local safety-reflex layer: halts/overrides cmd_vel on imminent collision using LiDAR and bumper contact, independent of any map or server.</description>
+  <description>Local safety-reflex layer and sole final cmd_vel publisher: arbitrates AUTO/MANUAL command authority and halts/overrides cmd_vel on imminent collision using LiDAR and bumper contact, independent of any map or server.</description>
   <maintainer email="jackdemarco.jd@gmail.com">Jack Demarco</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>ros_gz_interfaces</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

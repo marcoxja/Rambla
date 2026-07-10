@@ -12,10 +12,11 @@ def generate_launch_description():
     # Only launches ekf_node - does not include apartment_world.launch.py or
     # spawn simulation, so this same file can be included unchanged by a
     # future real-hardware bringup launch file alongside a hardware driver
-    # bringup instead of a sim launch. frame_id_fixer is launched from
-    # apartment_world.launch.py instead (not here): it now also covers
-    # /scan and /camera/*, which are unrelated to the EKF and needed by
-    # any sim consumer, not just this package - see frame_id_fixer.py.
+    # bringup instead of a sim launch. covariance_injector is launched from
+    # apartment_world.launch.py instead (not here): it injects covariance
+    # for the EKF's odom/imu inputs but isn't itself an EKF component, and
+    # sim-only nodes live in the sim launch, not this reusable one - see
+    # covariance_injector.py.
     ekf_node = Node(
         package='robot_localization',
         executable='ekf_node',

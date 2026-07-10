@@ -70,6 +70,11 @@
       <pose relative_to="base_scan"> 0 0 0 0 0 0 </pose>
       <update_rate>5</update_rate>
       <topic>scan</topic>
+      <!-- gz_frame_id sets the bridged ROS LaserScan's header.frame_id at
+           the source to the plain link name, avoiding the
+           "rambla/base_scan/..." model-name prefix gz-sim would otherwise
+           publish. See covariance_injector.py module docstring. -->
+      <gz_frame_id>base_scan</gz_frame_id>
       <ray>
         <scan>
           <horizontal>
@@ -153,6 +158,11 @@
       <pose relative_to="imu_link">0 0 0 0 0 0</pose>
       <update_rate>100</update_rate>
       <topic>imu/data</topic>
+      <!-- gz_frame_id sets the bridged ROS Imu's header.frame_id at the
+           source to the plain link name, avoiding the model-name prefix
+           gz-sim would otherwise publish. See covariance_injector.py
+           module docstring. -->
+      <gz_frame_id>imu_link</gz_frame_id>
       <always_on>1</always_on>
     </sensor>
   </gazebo>

@@ -253,7 +253,7 @@ Simulation may be used during development, but simulation should follow the real
 | ID | Area | Question | Phase | Notes |
 |---|---|---|---|---|
 | OQ-001 | Hardware | Which exact sensors and component models will Rambla use? | P0 | Fill in after hardware selection. |
-| OQ-002 | Hardware | Which OOMWOO components can be reused directly? | P0 | Requires repo and BoM review. |
+| OQ-002 | Hardware | Which OOMWOO components can be reused directly? | Resolved | No OOMWOO-One/Kaia package adopted wholesale — only the sensor-level `<gz_frame_id>` technique was harvested into Rambla's own sim/description stack. Kaia's firmware (ESP32) + micro-ROS telemetry decode remain the leading real-hardware bridge candidate, deferred to hardware selection (M10/M11). See `architecture/CLAUDE.md`'s foundation-decision section. |
 | OQ-003 | Navigation | What navigation stack or approach should be used? | P0 | Partially resolved: the SLAM package is RTAB-Map (see `robot/slam/CLAUDE.md`). Navigation stack (e.g. Nav2) remains undecided. |
 | OQ-004 | Mapping | How should the map represent rooms, objects, uncertainty, and change? | P1 | Needs separate design work. |
 | OQ-005 | Docking | How exactly should Rambla detect and approach its dock? | P0 | May depend on inherited design and hardware. |

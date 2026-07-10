@@ -5,8 +5,8 @@ Asserts liveness + frame_id correctness on the topics the pre-SLAM audit
 kind of check that would have caught two real regressions that previously
 required a human to notice by hand - ekf_node silently discarding all input
 (no /odometry/filtered), and /joint_states going silent. It is deliberately
-not a general test framework: liveness + frame_id on four topics, nothing
-more.
+not a general test framework: liveness + frame_id on a handful of topics,
+nothing more.
 """
 import unittest
 
@@ -83,13 +83,23 @@ class TestSmokeTopics(unittest.TestCase):
         self.node.destroy_subscription(listener.tf_sub)
         self.assertTrue(found, 'odom -> base_footprint transform never appeared on /tf')
 
-    def test_scan_fixed_frame_id(self):
-        msg = self._wait_for_message('/scan_fixed', LaserScan)
-        self.assertIsNotNone(msg, '/scan_fixed never published')
+    def test_scan_frame_id(self):
+        msg = self._wait_for_message('/scan', LaserScan)
+        self.assertIsNotNone(msg, '/scan never published')
         self.assertEqual(
             msg.header.frame_id, 'base_scan',
-            'frame_id_fixer is not rewriting /scan to the plain frame name - '
-            'SLAM will silently fail TF lookups against this topic')
+            'raw /scan has the wrong frame_id - check <gz_frame_id> on the '
+            'LiDAR sensor block in plugins.xacro; SLAM will silently fail '
+            'TF lookups against this topic')
+
+    def test_imu_frame_id(self):
+        from sensor_msgs.msg import Imu
+        msg = self._wait_for_message('/imu/data', Imu)
+        self.assertIsNotNone(msg, '/imu/data never published')
+        self.assertEqual(
+            msg.header.frame_id, 'imu_link',
+            'raw /imu/data has the wrong frame_id - check <gz_frame_id> on '
+            'the IMU sensor block in plugins.xacro')
 
     def test_joint_states_publishes(self):
         msg = self._wait_for_message('/joint_states', JointState)
@@ -104,7 +114,7 @@ class TestProcessExit(unittest.TestCase):
         # period and gets escalated to SIGTERM (-15) - confirmed benign
         # (Gazebo itself shuts down fine standalone; this is a
         # launch_testing-teardown timing quirk, not a crash). rclpy nodes
-        # (frame_id_fixer, ekf_node, etc.) exit -2 (SIGINT) on a clean
+        # (covariance_injector, ekf_node, etc.) exit -2 (SIGINT) on a clean
         # shutdown under launch_testing's teardown - also expected, not a
         # crash. Both allowed here in addition to the default 0.
         launch_testing.asserts.assertExitCodes(

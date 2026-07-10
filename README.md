@@ -4,7 +4,7 @@
 
 **A strange little home robot — not quite a pet, not quite an assistant.**
 
-ROS2 (Jazzy) · Raspberry Pi 5 · STM32 / micro-ROS · oomwoo platform (current direction)
+ROS2 (Jazzy) · Raspberry Pi 5 · STM32 / micro-ROS · oomwoo form factor (current direction)
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-design%20%2F%20pre--hardware-orange)
@@ -77,7 +77,7 @@ continues.
 | Middleware | ROS2 (Jazzy) |
 | Robot compute | Raspberry Pi 5 (8GB) |
 | Hardware bridge | STM32 PCB via micro-ROS |
-| Body platform | [oomwoo](https://github.com/makerspet/oomwoo) (wheeled, differential drive) |
+| Body platform | [oomwoo](https://github.com/makerspet/oomwoo) form factor — wheeled, differential drive (form-factor inspiration and a possible future Kaia.ai firmware/micro-ROS bridge at real-hardware time; Rambla's sim/description stack is Rambla's own, not adopted from OOMWOO-One/Kaia — see `.claude/internal-docs/architecture/CLAUDE.md`'s foundation-decision section) |
 
 **Resolved (mapping):**
 
@@ -164,7 +164,7 @@ relies on it; longer-lived "works but barebones" items live in the
 The apartment world and robot description are placeholder-grade; this
 hardens them before map/nav quality depends on them.
 
-- [ ] Adopt the enhanced apartment world per [RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md](RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md) — multi-room `house.world` baseline with higher-fidelity, low-compute furniture geometry and visual/semantic distinction (SIM-003)
+- [x] Adopt the enhanced apartment world per [RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md](RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md) — multi-room `house.world` baseline with higher-fidelity, low-compute furniture geometry and visual/semantic distinction (SIM-003) _(adopted as `house.sdf`, a second selectable world via `world:=house`; furniture fidelity pass — legs/clearance, stacked-box silhouettes, rugs — done and verified live in the VM)_
 - [ ] Fix the robot bumper geometry (currently two flat chords per side meeting in a ~5cm forward-protruding wedge at the front centerline, not a smooth arc — distorts collision/clearance behavior; see `.claude/internal-docs/audits/2026-07-08-accepted-stabilization-findings.md` §3/P1-1 for the precise geometry) and revisit sensor placement/mounting on the description
 - [ ] Keep the simpler worlds available for focused debugging and regression
 
@@ -194,7 +194,7 @@ _Done when: a nav stack is chosen and written down, so M5 config work isn't spec
 
 ### M5 — Autonomous navigation to a goal pose in sim (NAV-001/002/003)
 
-- [ ] Bring up the chosen nav stack against the cached map + M3 localization, with `rambla_safety` remaining the sole final `/cmd_vel` arbiter for the autonomous path (manual teleop via `rambla_control_panel` bypasses `rambla_safety` by current design and is a separate, unresolved motion-authority question — see accepted stabilization findings §5/P1-3)
+- [ ] Bring up the chosen nav stack against the cached map + M3 localization; `rambla_safety` is already the sole final `/cmd_vel` arbiter for both the autonomous and manual (AUTO/MANUAL, `rambla_control_panel`) paths — see `.claude/internal-docs/robot/behavior/rambla_safety/CLAUDE.md` for the arbitration contract (resolves P1-3)
 - [ ] Point-to-point goal navigation with obstacle avoidance and detectable/recoverable failure (NAV-004)
 
 _Done when: the robot drives to a commanded goal pose and stops — or reports failure — without a collision._
