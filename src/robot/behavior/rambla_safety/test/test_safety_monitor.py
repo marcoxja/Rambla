@@ -27,7 +27,7 @@ class TestSafetyMonitor(unittest.TestCase):
     def test_close_range_directly_ahead_blocks(self):
         monitor = SafetyMonitor(stop_distance_m=0.35, min_valid_range_m=0.3)
         ranges = make_ranges(5.0)
-        ranges[0] = 0.32  # angle_min = 0 = straight ahead, above self-detection floor
+        ranges[0] = 0.32  # angle_min = 0 = straight ahead, above the configured floor
         monitor.on_scan(ranges, angle_min=0.0, angle_increment=2 * math.pi / 360)
         self.assertTrue(monitor.is_blocked())
 
@@ -63,10 +63,12 @@ class TestSafetyMonitor(unittest.TestCase):
         monitor.on_scan(ranges, angle_min=0.0, angle_increment=2 * math.pi / 360)
         self.assertFalse(monitor.is_blocked())
 
-    def test_self_detection_range_ignored(self):
-        # Confirmed live in sim: the LiDAR sees its own front bumper at
-        # ~0.24-0.27m even with nothing else nearby - must not register as
-        # blocked (see DEFAULT_MIN_VALID_RANGE_M's docstring).
+    def test_close_range_below_valid_floor_ignored(self):
+        # Ranges below min_valid_range_m are treated as invalid (originally
+        # added for a self-detection artifact that M1's sensor-placement fix
+        # resolved at the geometry level - see DEFAULT_MIN_VALID_RANGE_M's
+        # docstring; this floor remains as a generic near-range guard, and
+        # this test exercises that filtering logic in the abstract).
         monitor = SafetyMonitor(stop_distance_m=0.35, min_valid_range_m=0.3)
         ranges = make_ranges(5.0)
         ranges[0] = 0.25
@@ -75,10 +77,10 @@ class TestSafetyMonitor(unittest.TestCase):
         monitor.on_scan(ranges, angle_min=0.0, angle_increment=2 * math.pi / 360)
         self.assertFalse(monitor.is_blocked())
 
-    def test_real_obstacle_beyond_self_detection_floor_blocks(self):
+    def test_real_obstacle_beyond_valid_floor_blocks(self):
         monitor = SafetyMonitor(stop_distance_m=0.35, min_valid_range_m=0.3)
         ranges = make_ranges(5.0)
-        ranges[0] = 0.25  # self-detection, ignored
+        ranges[0] = 0.25  # below the valid floor, ignored
         ranges[1] = 0.31  # real obstacle, closer than stop_distance_m
         monitor.on_scan(ranges, angle_min=0.0, angle_increment=2 * math.pi / 360)
         self.assertTrue(monitor.is_blocked())

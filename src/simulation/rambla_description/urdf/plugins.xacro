@@ -1,0 +1,169 @@
+<?xml version="1.0"?>
+<!-- https://gazebosim.org/docs/latest/migrating_gazebo_classic_ros2_packages/ -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>wheel_left_joint</left_joint>
+      <right_joint>wheel_right_joint</right_joint>
+      <wheel_separation>${wheel_base}</wheel_separation>
+      <wheel_radius>${wheel_diameter/2}</wheel_radius>
+      <max_linear_acceleration>${max_linear_acceleration}</max_linear_acceleration>
+      <topic>cmd_vel</topic>
+    </plugin>
+
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/odom</odom_topic>
+      <!-- <tf_topic> intentionally omitted: rambla_localization's ekf_node
+           (publish_tf: true) is the sole owner of the odom->base_footprint
+           transform. Re-adding <tf_topic> here would create two nodes
+           publishing the same transform every cycle - do not re-add both
+           at once. Raw /odom keeps publishing regardless; it's ekf_node's
+           own (unfused) input. -->
+      <dimensions>2</dimensions>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>joint_states</topic>
+      <joint_name>wheel_left_joint</joint_name>
+      <joint_name>wheel_right_joint</joint_name>
+    </plugin>
+
+    <!-- Contact system is a WORLD-level system (declared once in
+         apartment_world.sdf) - not repeated here to avoid a duplicate
+         plugin instance. -->
+  </gazebo>
+
+  <!-- Front bumper contact sensors. Each half is its own dedicated link (see
+       bumper_half in rambla.urdf.xacro) with exactly one unnamed collision,
+       auto-named "<link>_collision" by sdformat. One sensor watches one
+       collision on its own link - the pattern proven working in
+       iRobotEducation/create3_sim (see bugs/bumper-contact-sensor-silent.md),
+       replacing the many-named-facet-collisions-on-base_link layout this
+       repo used to have. Publishes gz.msgs.Contacts, bridged to ROS as
+       ros_gz_interfaces/msg/Contacts. -->
+  <gazebo reference="bumper_left">
+    <sensor name="bumper_left" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <contact>
+        <collision>bumper_left_collision</collision>
+      </contact>
+      <topic>bumper_left/contact</topic>
+    </sensor>
+  </gazebo>
+  <gazebo reference="bumper_right">
+    <sensor name="bumper_right" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <contact>
+        <collision>bumper_right_collision</collision>
+      </contact>
+      <topic>bumper_right/contact</topic>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="base_scan">
+    <sensor name="laser_scan_sensor" type="gpu_lidar">
+      <pose relative_to="base_scan"> 0 0 0 0 0 0 </pose>
+      <update_rate>5</update_rate>
+      <topic>scan</topic>
+      <!-- gz_frame_id sets the bridged ROS LaserScan's header.frame_id at
+           the source to the plain link name, avoiding the
+           "rambla/base_scan/..." model-name prefix gz-sim would otherwise
+           publish. See covariance_injector.py module docstring. -->
+      <gz_frame_id>base_scan</gz_frame_id>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>0</min_angle>
+            <max_angle>${2*pi}</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>10.0</max>
+          <resolution>0.02</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
+  <!-- Forward-facing camera. Standard gz-sim `camera` sensor type; requires the
+       world's Sensors system plugin to run with the ogre2 render engine (see
+       apartment_world.sdf), including headless.
+
+       IMPORTANT: gz-sim's camera sensor always renders along its OWN local
+       +X axis, regardless of which link/pose it's declared under - the
+       parent link's orientation is not consulted by the renderer (this is
+       long-standing Gazebo Classic-compatible behaviour, see
+       https://github.com/gazebosim/gz-sensors/issues/488 and
+       http://answers.gazebosim.org/question/5011). Attaching the <sensor>
+       under camera_link_optical (rotated so its *declared* Z is forward,
+       per REP-103) does NOT rotate what's actually rendered - the image
+       content still comes out along the body's true +X, while every
+       consumer (TF, frame_id, camera_info) is told the data is Z-forward.
+       Confirmed empirically on rambla-vm: driving/rotating the robot did
+       not reorient scene content in the frame the way body-forward motion
+       should, and the captured frame showed the floor on the left / wall
+       on the right - a 90-degree-family mismatch consistent with this
+       exact known issue.
+
+       Fix: attach the <sensor> to camera_link (true body X-forward frame)
+       so the renderer's fixed +X lines up with the robot's real forward
+       direction. camera_link_optical is kept purely as the REP-103
+       TF/consumer-facing frame (frame_id on the bridged image/camera_info
+       topics) - the same split used by the accepted workaround in the
+       Gazebo issue above (static optical transform for ROS consumers,
+       sensor pose left alone on the physical frame). -->
+  <gazebo reference="camera_link">
+    <sensor name="rambla_camera" type="camera">
+      <pose relative_to="camera_link">${camera_depth/2} 0 0 0 0 0</pose>
+      <update_rate>15</update_rate>
+      <topic>camera/image_raw</topic>
+      <camera>
+        <optical_frame_id>camera_link_optical</optical_frame_id>
+        <horizontal_fov>1.047</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
+  <!-- IMU. Requires the world-level gz-sim-imu-system plugin (see
+       apartment_world.sdf) - unlike DiffDrive/Lidar/Camera, IMU sensing has no
+       per-model system, only the sensor block below plus the world-level plugin. -->
+  <gazebo reference="imu_link">
+    <sensor name="rambla_imu" type="imu">
+      <pose relative_to="imu_link">0 0 0 0 0 0</pose>
+      <update_rate>100</update_rate>
+      <topic>imu/data</topic>
+      <!-- gz_frame_id sets the bridged ROS Imu's header.frame_id at the
+           source to the plain link name, avoiding the model-name prefix
+           gz-sim would otherwise publish. See covariance_injector.py
+           module docstring. -->
+      <gz_frame_id>imu_link</gz_frame_id>
+      <always_on>1</always_on>
+    </sensor>
+  </gazebo>
+</robot>

@@ -51,7 +51,7 @@ Simulation may be used during development, but simulation should follow the real
 | CHG-005 | Charging | Rambla shall support safe fallback behavior when low on power. | P0 | Minimum expected behavior is to attempt safe return to dock. |
 | SIM-001 | Simulation | Rambla may use simulation to test movement, sensing, mapping, and behavior. | P1 | Simulation details should be specified elsewhere. |
 | SIM-002 | Simulation | Simulation should reflect real robot requirements rather than define them. | P1 | The physical robot remains the source of truth. |
-| SIM-003 | Simulation | Rambla's primary residential simulation world should follow the apartment-world enhancement design brief. | P1 | See RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md — a larger single-floor apartment layout with higher-fidelity navigation geometry and lightweight visual/semantic differentiation for perception testing. |
+| SIM-003 | Simulation | Rambla's primary residential simulation world should follow the apartment-world enhancement design brief. | P1 | A larger single-floor apartment layout with higher-fidelity navigation geometry and lightweight visual/semantic differentiation for perception testing — implemented as `house.sdf` in `rambla_sim`, selectable via `world:=house`; see the README M1 milestone. |
 
 ## Sensing Requirements
 
@@ -166,7 +166,7 @@ Simulation may be used during development, but simulation should follow the real
 | ID | Area | Requirement | Phase | Notes |
 |---|---|---|---|---|
 | CTL-001 | Control Interface | Rambla shall provide a web-based control and debug interface usable against either the simulated or real robot. | P1 | Must be reachable from the developer's own machine/network, not only from a browser running on the sim VM itself — see CTL-008 for network reachability and CTL-009 for public internet hosting. |
-| CTL-002 | Control Interface | The interface shall support manual driving via on-screen virtual joysticks (translation and rotation). | P1 | Depends only on `/cmd_vel` (already exists). Pairs with the README "Basic teleop" milestone. |
+| CTL-002 | Control Interface | The interface shall support manual driving via on-screen virtual joysticks (translation and rotation). | P1 | Depends on `/cmd_vel_teleop` (already exists), arbitrated into `/cmd_vel` by `rambla_safety`'s AUTO/MANUAL control authority. Pairs with the README "Basic teleop" milestone. |
 | CTL-003 | Control Interface | The interface shall display a live camera feed from the robot, with manual-drive controls overlaid on top of it. | P1 | Depends only on `/camera/image_raw` (already exists). No SLAM/navigation dependency. |
 | CTL-004 | Control Interface | The interface shall provide debug views for raw sensor data, node output, and other diagnostic metrics, organized into navigable tabs. | P1 | Depends only on existing topics/nodes. Directly addresses the "no visual debug tooling" gap noted in `robot/pre-slam-audit.md`; buildable before SLAM. |
 | CTL-005 | Control Interface | The interface shall provide a HUD-style overlay showing a top-down view of the current SLAM map with a marker for the robot's live estimated position. | P2 | Hard dependency: requires MAP-001 (SLAM producing a usable map) and MAP-005 (live position estimate) to exist first. Do not build before then — there is nothing to display. |
@@ -190,6 +190,17 @@ Simulation may be used during development, but simulation should follow the real
 | EXP-007 | Nonverbal Expression | Rambla may use subtle sounds to communicate state. | P2 | Sounds should be audible but not annoying. |
 | EXP-008 | Visual Expression | Rambla may use screen-based eyes or visual indicators to communicate state. | P2 | Exact display hardware is deferred. |
 | EXP-009 | Expression | Rambla’s expression should reflect current task and internal state. | P2 | Example: focused, curious, cautious, low energy. |
+
+## Interface & Portability Requirements
+
+| ID | Area | Requirement | Phase | Notes |
+|---|---|---|---|---|
+| INT-001 | Interface Contracts | Application layers shall consume normalized contracts independent of whether their source is simulation or physical hardware. | P1 | Canonical owner: `src/shared/contracts/robot-interface.md`. |
+| INT-002 | Interface Contracts | ROS topics and transforms exposed above the platform adapter shall use stable canonical names, message types, and frame conventions. | P1 | Formalizes the single-writer TF and `/cmd_vel` arbitration invariants already established informally in `architecture/CLAUDE.md`. Canonical owner: `src/shared/contracts/robot-interface.md`. |
+| INT-003 | Interface Contracts | Simulation-only naming or transport artifacts shall not propagate into higher-level consumers. | P1 | Example: sim-only topic remaps or frame_id shims must not leak into localization/navigation/control-panel code paths. See `src/shared/contracts/robot-interface.md`'s sim-shim boundary section. |
+| INT-004 | Interface Contracts | Observation-batch and map-artifact formats shall be versioned and compatibility-checkable. | P1 | Canonical owners: `src/shared/contracts/observation-batch.md`, `src/shared/contracts/map-artifact.md`. Related: MAP-001, OQ-014. |
+| INT-005 | Interface Contracts | Actuator commands shall pass through one canonical arbitration boundary. | P0 | Already implemented: `rambla_safety` is the sole `/cmd_vel` publisher, arbitrating `/cmd_vel_raw` (autonomous) against `/cmd_vel_teleop` (manual). See `architecture/CLAUDE.md`. |
+| INT-006 | Interface Contracts | Contract conformance shall be automatically testable. | P1 | Implemented: `src/simulation/rambla_sim/test/test_smoke_topics.py` asserts topic liveness, frame_ids, and rates (`/odometry/filtered`, `/scan`, camera topics) plus the `odom→base_footprint` TF, against `robot-interface.md`. See README M2 and M8's later reliability-hardening extension. |
 
 ## Local vs External Processing Requirements
 
@@ -253,17 +264,17 @@ Simulation may be used during development, but simulation should follow the real
 | ID | Area | Question | Phase | Notes |
 |---|---|---|---|---|
 | OQ-001 | Hardware | Which exact sensors and component models will Rambla use? | P0 | Fill in after hardware selection. |
-| OQ-002 | Hardware | Which OOMWOO components can be reused directly? | P0 | Requires repo and BoM review. |
-| OQ-003 | Navigation | What navigation stack or approach should be used? | P0 | Partially resolved: the SLAM package is RTAB-Map (see `robot/slam/CLAUDE.md`). Navigation stack (e.g. Nav2) remains undecided. |
+| OQ-002 | Hardware | Which OOMWOO components can be reused directly? | Resolved | No OOMWOO-One/Kaia package adopted wholesale — only the sensor-level `<gz_frame_id>` technique was harvested into Rambla's own sim/description stack. Kaia's firmware (ESP32) + micro-ROS telemetry decode remain the leading real-hardware bridge candidate, deferred to hardware selection (M12/M13). See `architecture/CLAUDE.md`'s foundation-decision section. |
+| OQ-003 | Navigation | What navigation stack or approach should be used? | P0 | Splits into two halves: mapping is resolved — the SLAM package is RTAB-Map (see `compute/slam/CLAUDE.md`). Navigation (e.g. Nav2) remains undecided — decision gate at README M6. |
 | OQ-004 | Mapping | How should the map represent rooms, objects, uncertainty, and change? | P1 | Needs separate design work. |
 | OQ-005 | Docking | How exactly should Rambla detect and approach its dock? | P0 | May depend on inherited design and hardware. |
 | OQ-006 | Decision-Making | What is the right structure for reflexes, tasks, wants, and goals? | P1 | Needs separate behavior design. |
-| OQ-007 | Local vs Server | Which functions must run locally, and which can be offloaded? | P1 | Partially resolved for mapping: SLAM map assembly runs as an ephemeral burst-compute job (Modal), not an always-on server — the Pi records an observation batch, uploads it, and later retrieves a versioned map artifact to localize against. Safety reflexes stay local, never delegated. See `architecture/CLAUDE.md`'s Local / Server Split table and `robot/slam/CLAUDE.md`. Persistent-state backend, observation package format, and job/artifact lifecycle/versioning are separate open questions — see OQ-014. |
+| OQ-007 | Local vs Server | Which functions must run locally, and which can be offloaded? | P1 | Resolved for mapping, still open elsewhere: SLAM map assembly runs as an ephemeral burst-compute job (Modal), not an always-on server — the Pi records an observation batch, uploads it, and later retrieves a versioned map artifact to localize against. Safety reflexes stay local, never delegated (see INT-005). See `architecture/CLAUDE.md`'s Runtime and Compute Placement table and `compute/slam/CLAUDE.md`. Which *other* future workloads (semantic labeling, AI/decision-layer inference) get the same local/burst split is still undecided. Persistent-state backend, observation package format, and job/artifact lifecycle/versioning are separate open questions — see OQ-014. |
 | OQ-008 | Memory | What should Rambla remember, forget, summarize, or expose for review? | P2 | Needs separate memory design. |
 | OQ-009 | Expression | What screen, sounds, or physical cues should communicate Rambla’s state? | P2 | Hardware and UX decision. |
 | OQ-010 | Human Override | What exact command and override hierarchy should Rambla use? | P1 | This spec only requires that one exists. |
 | OQ-011 | Security-Lite | What counts as meaningful home-awareness or security-lite detection? | P3 | Must avoid false certainty. |
 | OQ-012 | Smart Home | Which smart home systems should Rambla eventually control or observe? | Future | Not an early decision. |
 | OQ-013 | Performance | What CPU/RAM/power budget should each Pi-side subsystem target? | P1 | Needs real Pi 5 hardware to finalize; see `robot/resource-budget/CLAUDE.md` for the interim framework. |
-| OQ-014 | Burst Compute / Persistent State | Where should job records, observation metadata, and map version history live, and what format should an observation batch use? | P1 | Not decided. Candidates and tradeoffs recorded in `architecture/hosting-research.md` (e.g. Supabase for persistent state) and `robot/slam/research.md` (observation batch format). Applies beyond SLAM to any future burst-compute job (semantic labeling, AI/decision-layer inference). |
+| OQ-014 | Burst Compute / Persistent State | Where should job records, observation metadata, and map version history live, and what format should an observation batch use? | P1 | Not decided — decision gate at README M11. The current Modal Volume (`rambla-slam-data`) used by the SLAM job is a *temporary* stand-in scoped to that milestone only, not a resolution of this question (see `compute/slam/CLAUDE.md`). Candidates and tradeoffs for the durable backend are recorded in `architecture/hosting-research.md` (e.g. Supabase for persistent state) and `compute/slam/research.md` (observation batch format). Applies beyond SLAM to any future burst-compute job (semantic labeling, AI/decision-layer inference). |
 | OQ-015 | Event History | Where should event and cognition history (perceptions, thoughts, goals, decisions, state changes, incidents) be stored, and how should it be structured? | P1 | Not decided. See EVT-001/EVT-036, which defer the exact database, event bus, schema, and storage architecture. Likely shares the persistent-state backend decision with OQ-014 (Supabase is a candidate there). |

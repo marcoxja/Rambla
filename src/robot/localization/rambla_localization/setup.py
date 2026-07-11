@@ -21,7 +21,7 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'frame_id_fixer = rambla_localization.frame_id_fixer:main',
+            'covariance_injector = rambla_localization.covariance_injector:main',
         ],
     },
 )

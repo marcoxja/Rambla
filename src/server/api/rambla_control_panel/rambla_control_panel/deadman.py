@@ -54,3 +54,14 @@ class DeadmanTimer:
     @property
     def is_tripped(self):
         return self._tripped
+
+    @property
+    def is_active(self):
+        """True only while a command has been received and hasn't gone
+        stale - i.e. there's a live operator behind the current command,
+        as opposed to a fresh zero from either startup or a trip. Lets a
+        caller (e.g. control_panel_node's cmd_vel publisher) distinguish
+        "genuinely under manual control" from "silent/never connected"
+        without inspecting the command value itself.
+        """
+        return self._last_update is not None and not self._tripped
