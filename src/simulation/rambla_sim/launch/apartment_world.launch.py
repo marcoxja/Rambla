@@ -4,6 +4,7 @@ import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
+    AppendEnvironmentVariable,
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     LogInfo,
@@ -15,6 +16,7 @@ from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 # Per-world spawn defaults, used whenever the spawn_x/y/z launch args are left
 # at their default (empty string). Keyed by the `world` launch-arg value,
@@ -55,9 +57,26 @@ def launch_setup(context, *args, **kwargs):
     # Headless (-s, server-only) by default - required over a plain SSH
     # session with no DISPLAY. Pass gui:=true only when a real X server is
     # reachable (e.g. DISPLAY=:0 pointed at the VM's own console via
-    # startx - see robot/simulation/CLAUDE.md) to watch the sim visually.
+    # startx - see simulation/CLAUDE.md) to watch the sim visually.
     gui = LaunchConfiguration('gui').perform(context)
     server_flag = '' if gui == 'true' else '-s '
+
+    # gz-sim's model:// URI resolver (SystemPaths) only searches
+    # GZ_SIM_RESOURCE_PATH, which out of the box covers /opt/ros/jazzy/share
+    # but not this workspace's own install space - so package://rambla_
+    # description/... mesh URIs (introduced by the M1 bumper mesh fix; the
+    # first mesh this repo has used) fail to resolve ("Unable to find file
+    # with URI [model://rambla_description/...]") even though the .stl is
+    # correctly installed and package:// resolves fine for the URDF itself.
+    # Appending rambla_description's share PARENT dir (not the package's own
+    # share/rambla_description subdir) lets gz-sim's model://<pkg>/<path>
+    # search land on share/<pkg>/<path>, matching how CMakeLists.txt installs
+    # meshes/. Must be set before gz_sim starts.
+    gz_resource_path = AppendEnvironmentVariable(
+        'GZ_SIM_RESOURCE_PATH',
+        os.path.dirname(description_pkg_share),
+    )
+
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -157,6 +176,33 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': True}],
     )
 
+    # Always-on JPEG side channel for /camera/image_raw, published via the
+    # standard image_transport republish mechanism rather than anything
+    # bespoke to this repo. /camera/image_raw itself (raw, 15Hz) is
+    # untouched - this is a second, additional publisher any consumer can
+    # opt into for lower bandwidth (e.g. the observation-batch recorder;
+    # see record_observation_batch.launch.py), not a replacement. jpeg
+    # quality is a launch arg so it can be tuned during M3's mapping-batch
+    # validation without a code change; see observation-batch.md for the
+    # rationale and chosen default.
+    camera_compressor = Node(
+        package='image_transport',
+        executable='republish',
+        name='camera_compressor',
+        arguments=['raw', 'compressed'],
+        remappings=[
+            ('in', '/camera/image_raw'),
+            ('out/compressed', '/camera/image_raw/compressed'),
+        ],
+        parameters=[{
+            'use_sim_time': True,
+            'compressed.jpeg_quality': ParameterValue(
+                LaunchConfiguration('camera_jpeg_quality'), value_type=int
+            ),
+        }],
+        output='screen',
+    )
+
     # Fuses /odom_fixed + /imu/data_fixed into /odometry/filtered and becomes
     # sole owner of the odom->base_footprint TF (see
     # rambla_localization/config/ekf.yaml and the <tf_topic> removal in
@@ -217,7 +263,7 @@ def launch_setup(context, *args, **kwargs):
     # signal for negligible benefit.
     def _bringup_on_spawn_exit(event, context):
         if event.returncode == 0:
-            return [bridge, covariance_injector, ekf, safety]
+            return [bridge, covariance_injector, camera_compressor, ekf, safety]
         return [
             LogInfo(
                 msg=(
@@ -236,6 +282,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     return [
+        gz_resource_path,
         gz_sim,
         robot_state_publisher,
         spawn_after_rsp,
@@ -273,6 +320,14 @@ def generate_launch_description():
                 'true = run gz sim with its GUI attached (needs a real '
                 'DISPLAY, e.g. the VM console via startx); false (default) '
                 '= headless server-only, required over plain SSH.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'camera_jpeg_quality', default_value='85',
+            description=(
+                'JPEG quality (0-100) for the always-on /camera/image_raw/'
+                'compressed side channel published by camera_compressor. '
+                'Does not affect the raw /camera/image_raw feed.'
             ),
         ),
         OpaqueFunction(function=launch_setup),

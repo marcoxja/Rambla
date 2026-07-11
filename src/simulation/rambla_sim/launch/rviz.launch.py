@@ -13,7 +13,7 @@ def generate_launch_description():
     # (X-forwarded) session, not included by it. RViz is a GUI tool the
     # developer starts/stops independently of the sim; keeping it separate
     # is what makes it fit the SSH-based Remote-SSH workflow (see
-    # robot/simulation/CLAUDE.md) instead of requiring VM console access.
+    # simulation/CLAUDE.md) instead of requiring VM console access.
     rviz = Node(
         package='rviz2',
         executable='rviz2',

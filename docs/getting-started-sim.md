@@ -10,9 +10,9 @@ requirements, it doesn't define them.
 The sim runs on **Gazebo Harmonic** paired with **ROS2 Jazzy**, the same
 middleware targeted for the physical robot.
 
-## The Three Simulation Packages
+## The Simulation Packages
 
-Simulation code lives under `src/robot/simulation/` as three packages,
+Simulation code lives under `src/simulation/` as four packages,
 each with a distinct role:
 
 - **`rambla_sim_smoke`** — a minimal Gazebo world with a trivial box model
@@ -30,6 +30,10 @@ each with a distinct role:
   worlds plus the launch file that spawns the robot and bridges all its
   sensor and control topics into ROS2.
 
+- **`rambla_bagging`** — records an observation batch (rosbag2/MCAP) of the
+  stable sensor topic contract during a sim run, for later SLAM/mapping
+  processing.
+
 ## The Apartment World
 
 `rambla_sim` launches Rambla into a multi-room apartment and exposes the
@@ -43,7 +47,10 @@ ros2 launch rambla_sim apartment_world.launch.py world:=house
 
 | Topic | Purpose |
 |---|---|
-| `/cmd_vel` | Drive command input |
+| `/cmd_vel` | Arbitrated drive command output — sole publisher is `rambla_safety`; bridged to the Gazebo `DiffDrive` plugin |
+| `/cmd_vel_raw` | Autonomous drive intent, published by `rambla_traversal` |
+| `/cmd_vel_teleop` | Manual drive intent, published by `rambla_control_panel` |
+| `/control_authority` | Current arbitration mode (`AUTO`/`MANUAL`), published by `rambla_safety` |
 | `/odom` | Raw odometry |
 | `/scan` | LiDAR |
 | `/camera/image_raw` | Forward camera feed |
@@ -52,12 +59,15 @@ ros2 launch rambla_sim apartment_world.launch.py world:=house
 | `/joint_states` | Joint state (wheels, etc.) |
 
 An EKF sensor-fusion node consumes these to publish a filtered odometry
-estimate, which is what localization is built on.
+estimate, which is what localization is built on. `rambla_safety` is the
+sole publisher of `/cmd_vel`: it arbitrates between `/cmd_vel_raw`
+(autonomous) and `/cmd_vel_teleop` (manual), applying a collision filter to
+whichever source has authority — see
+`.claude/internal-docs/robot/behavior/rambla_safety/CLAUDE.md` for the full
+contract.
 
-See `SIM-003` in the design spec and
-`RAMBLA_APARTMENT_WORLD_ENHANCEMENT.md` for the enhancement brief this world
-was adopted against; higher-fidelity furniture geometry and further visual
-distinction are a deferred follow-up.
+See `SIM-003` in the design spec for the requirement this world was
+adopted against.
 
 ## The Control Panel
 

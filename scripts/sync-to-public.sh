@@ -120,9 +120,9 @@ while IFS= read -r -d '' f; do
         echo "  HARD BLOCK: $rel (env file)"; HARD_BLOCK_FOUND=true
       fi ;;
   esac
-  # Any unexpected dotfile/dotdir other than .gitignore
+  # Any unexpected dotfile/dotdir other than .gitignore/.gitkeep
   case "$base" in
-    .gitignore) : ;;
+    .gitignore|.gitkeep) : ;;
     .*) echo "  HARD BLOCK: $rel (unexpected dotfile/dotdir)"; HARD_BLOCK_FOUND=true ;;
   esac
 
