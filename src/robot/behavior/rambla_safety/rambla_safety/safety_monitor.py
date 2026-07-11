@@ -11,18 +11,21 @@ Rotation-in-place is always allowed even while tripped, since turning
 away is the recovery action and can't itself cause the same collision.
 """
 
-# Ranges below this are the LiDAR seeing its own front bumper, not a real
-# obstacle - confirmed live in sim (rambla-vm, 2026-07-08): base_scan sits
-# lidar_center_offset=-0.0965m behind body center (params.xacro), so the
-# bumper's outer face at the front (angle 0, where both bumper_half halves
-# meet with no gap - see rambla.urdf.xacro) sits ~0.28m from the LiDAR
-# origin, not the ~0.17m body radius alone. A handful of samples right at
-# angle 0 read ~0.24-0.27m even in open room with nothing nearby, which
-# would otherwise show as "blocked" at spawn. This is a sensor placement
-# fact, not sensor noise - excluded here rather than fixed at the geometry
-# level (out of scope for the safety/traversal nodes). Must stay below
+# Historical note (resolved 2026-07-09, M1 bumper/sensor-placement fix):
+# this floor used to mask a real forward self-return of ~0.24-0.27m at
+# angle 0, confirmed live in sim on 2026-07-08. That was mislabeled at the
+# time as "the LiDAR seeing its own front bumper" - direct geometric
+# calculation later showed the bumper's z-band never reached the scan
+# plane at all; the actual obstruction was the forward camera box, whose
+# z-band straddled the old scan height exactly at that distance. Fixed at
+# the source (rambla_description/urdf/params.xacro's laser_puck_offset
+# raised so the scan plane clears the camera), not by filtering here -
+# confirmed live post-fix: open-space front-arc minimum is ~2.9m, no
+# near-range self-return. This floor now only exists as a generic guard
+# against noise near the LiDAR's own physical range_min (0.1m per
+# plugins.xacro's gpu_lidar <range><min>). Must stay below
 # STOP_DISTANCE_M or the stop condition could never trigger.
-DEFAULT_MIN_VALID_RANGE_M = 0.3
+DEFAULT_MIN_VALID_RANGE_M = 0.12
 # Must be > DEFAULT_MIN_VALID_RANGE_M - real obstacles closer than this
 # (but beyond the self-detection band above) trigger a stop.
 DEFAULT_STOP_DISTANCE_M = 0.35

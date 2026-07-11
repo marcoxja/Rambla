@@ -67,6 +67,43 @@ class TestDeadmanTimer(unittest.TestCase):
         self.assertEqual(timer.command(), (0.0, 0.0))
         self.assertTrue(timer.is_tripped)
 
+    def test_not_active_before_any_command(self):
+        clock = FakeClock()
+        timer = DeadmanTimer(timeout_s=0.3, clock=clock)
+        self.assertFalse(timer.is_active)
+
+    def test_active_while_fresh(self):
+        clock = FakeClock()
+        timer = DeadmanTimer(timeout_s=0.3, clock=clock)
+        timer.on_command(0.0, 0.0)
+        clock.advance(0.1)
+        timer.command()
+        self.assertTrue(timer.is_active)
+
+    def test_not_active_after_timeout(self):
+        clock = FakeClock()
+        timer = DeadmanTimer(timeout_s=0.3, clock=clock)
+        timer.on_command(0.5, -0.2)
+        clock.advance(0.31)
+        timer.command()
+        self.assertFalse(timer.is_active)
+
+    def test_not_active_after_disconnect(self):
+        clock = FakeClock()
+        timer = DeadmanTimer(timeout_s=0.3, clock=clock)
+        timer.on_command(0.5, -0.2)
+        timer.on_disconnect()
+        self.assertFalse(timer.is_active)
+
+    def test_active_again_after_recovering_from_timeout(self):
+        clock = FakeClock()
+        timer = DeadmanTimer(timeout_s=0.3, clock=clock)
+        timer.on_command(0.5, -0.2)
+        clock.advance(0.31)
+        timer.command()
+        timer.on_command(0.1, 0.1)
+        self.assertTrue(timer.is_active)
+
 
 if __name__ == '__main__':
     unittest.main()

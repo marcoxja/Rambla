@@ -1,0 +1,97 @@
+<?xml version="1.0" ?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- ****************** ROBOT DIMENSIONS ****************** -->
+  <!-- Units: meters, degrees, kg, N*m, m/s2 -->
+  <!-- Placeholder dimensions per DESIGN_SPEC PHY-004: no Rambla hardware has been
+       selected yet, so these are borrowed from a ~350mm round vacuum-style base
+       (makerspet/proscenic-m6pro) as a physically reasonable stand-in, not a
+       committed form factor. -->
+  <xacro:property name="wheel_diameter" value="0.068"/>
+  <xacro:property name="wheel_width" value="0.012"/>
+  <xacro:property name="caster_diameter" value="0.025"/>
+  <!-- Caster center to base edge -->
+  <xacro:property name="caster_inset" value="0.030"/>
+  <xacro:property name="floor_clearance" value="0.0125"/>
+  <xacro:property name="base_diameter" value="0.349"/>
+  <xacro:property name="wheel_base" value="0.235"/>
+  <!-- Body cylinder: top is 79mm above the floor, minus 12.5mm floor gap = 66.5mm tall. -->
+  <xacro:property name="lower_cylinder_height" value="0.0665"/>
+  <!-- LiDAR housing, 18mm tall. -->
+  <xacro:property name="laser_puck_height" value="0.018"/>
+  <xacro:property name="laser_puck_diameter" value="0.083"/>
+  <!-- Scan-plane height above the body top (M1, PHY-004 sensor-placement
+       revisit): the scan plane sits at lower_cylinder_height + this offset
+       in base_link frame. Previously 0.009 (= laser_puck_height/2, housing
+       flush on the body top) put the plane at z=0.0755, which cuts directly
+       through the forward camera box (camera_z +/- camera_height/2 =
+       [0.065, 0.085] - see camera_z comment below) at x=0.1545..0.1745,
+       ~0.251-0.271m from the rear-offset LiDAR - this is the forward
+       self-return documented in rambla_safety's min_valid_range_m (that
+       doc's "sees its own front bumper" wording is inaccurate: the bumper's
+       z-band [0.008, 0.058] never reaches the scan plane at all; verified by
+       direct calculation, the camera is the actual obstruction). Raised to
+       0.0335 so the scan plane (z=0.10) clears the camera top (0.085) by
+       15mm - eliminates the forward self-return rather than just filtering
+       it. Placeholder cosmetic note: this puts the housing ~24.5mm above the
+       body top with no mast geometry filling the gap (a small floating-turret
+       look) - acceptable for this placeholder-grade body (PHY-004); revisit
+       with a real mount at M10/M11. -->
+  <xacro:property name="laser_puck_offset" value="0.0335"/>
+  <!-- LiDAR turret sits toward the REAR of the body, not centered. +X is forward,
+       so negative shifts it back. Left as-is by the M1 sensor-placement revisit -
+       the vertical raise above fully resolves the forward self-detection
+       regardless of this offset, and rambla_safety's front-arc check only looks
+       forward, so the rear placement doesn't affect stop-distance behavior. -->
+  <xacro:property name="lidar_center_offset" value="-0.0965"/>
+
+  <!-- N*m -->
+  <xacro:property name="motor_stall_torque" value="0.5"/>
+  <xacro:property name="max_linear_acceleration" value="1"/>
+  <xacro:property name="lower_cylinder_mass" value="2.500"/>
+  <!-- caster and battery weight -->
+  <xacro:property name="caster_mass" value="0.050"/>
+  <xacro:property name="wheel_mass" value="0.100"/>
+  <xacro:property name="laser_puck_mass" value="0.150"/>
+
+  <!-- Front bumper = the front 180 deg of the body's cylindrical wall. Left half
+       spans 0..+90 deg, right half -90..0 deg (they meet at the front, 0 deg, so
+       there is no dead-center gap). Each half is its own dedicated link (bumper_left,
+       bumper_right) with exactly one unnamed collision - one sensor watching one
+       collision per link, matching the proven working pattern in
+       iRobotEducation/create3_sim rather than the many named-facet-collisions-
+       per-sensor layout this replaced (see bugs/bumper-contact-sensor-silent.md).
+       As of M1 (SIM-003/PHY-004), each half's collision+visual is a solid
+       circular-segment MESH (see meshes/generate_bumper_mesh.py and the
+       bumper_half macro in rambla.urdf.xacro) whose outer face follows the true
+       body radius all the way around its 90 deg arc, rather than the old
+       single flat box per half that protruded ~5cm past the body at the front
+       centerline (audit 2026-07-08-accepted-stabilization-findings.md §3/P1-1).
+       bumper_thickness/bumper_height still set the mesh's radial thickness and
+       vertical band; bumper_z is still its mount height. Bumper sits at the
+       body radius and protrudes a few mm so it's the surface that touches
+       obstacles. -->
+  <xacro:property name="bumper_thickness" value="0.010"/> <!-- radial; outer face ~5mm proud -->
+  <xacro:property name="bumper_height" value="0.050"/>
+  <xacro:property name="bumper_z" value="0.033"/>     <!-- center height in base_link frame -->
+
+  <!-- Forward-facing camera. No reference hardware yet (DESIGN_SPEC SNS-007, P1) -
+       small placeholder box mounted on the front edge of the body. Height is set
+       above the front bumper's vertical band (bumper_z +/- bumper_height/2 =
+       [0.008, 0.058]) so the bumper doesn't sit in the camera's field of view -
+       camera_z=0.04 previously put the camera box (z +/- camera_height/2 =
+       [0.03, 0.05]) almost fully inside that band, with the bumper's outer face
+       radially in front of the camera's. See bugs/camera-bumper-occlusion note
+       in simulation/CLAUDE.md. -->
+  <xacro:property name="camera_width" value="0.03"/>
+  <xacro:property name="camera_depth" value="0.02"/>
+  <xacro:property name="camera_height" value="0.02"/>
+  <xacro:property name="camera_mass" value="0.03"/>
+  <xacro:property name="camera_z" value="0.075"/>
+
+  <!-- IMU. No reference hardware yet - modelled as a small chip at the geometric
+       center of base_link, no meaningful offset needed. -->
+  <xacro:property name="imu_size" value="0.01"/>
+  <xacro:property name="imu_mass" value="0.02"/>
+
+  <xacro:property name="DEG2RAD" value="0.0174533"/>
+</robot>

@@ -3,7 +3,7 @@
 Deliberately not a general-purpose navigation/planning system: this only
 needs to keep the robot moving through the apartment world long enough to
 cross at least one doorway and produce a usable mapping bag (per
-.claude/internal-docs/robot/slam/plans/real-map-plan-2026-07-06.md's
+.claude/internal-docs/compute/slam/plans/real-map-plan-2026-07-06.md's
 "~30-60s, crosses one doorway" recording target) - not to reach a
 specific goal or build a map itself. No map dependency, matching
 DESIGN_SPEC.md's decision to keep the Nav2/navigation-stack question

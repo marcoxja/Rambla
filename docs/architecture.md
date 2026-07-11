@@ -121,7 +121,7 @@ control of the robot.
 - Navigation stack — Nav2 is the leading candidate (see `OQ-003` in
   [DESIGN_SPEC.md](../DESIGN_SPEC.md))
 - Persistent-state backend — Supabase is a candidate (see `OQ-014`)
-- Server-side AI/LLM stack — undecided
+- Hosted cognition/LLM stack — undecided
 - Event/cognition history storage and schema — undecided (see `OQ-015`)
 
 See [DESIGN_SPEC.md](../DESIGN_SPEC.md) for the full set of open questions

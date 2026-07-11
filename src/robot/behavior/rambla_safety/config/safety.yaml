@@ -1,12 +1,20 @@
 safety_node:
   ros__parameters:
-    # Ranges below this are the LiDAR seeing its own front bumper, not a
-    # real obstacle - confirmed live in sim (2026-07-08): a handful of
-    # samples right at angle 0 read ~0.24-0.27m even in open space, since
-    # base_scan sits behind body center (see safety_monitor.py's
-    # DEFAULT_MIN_VALID_RANGE_M for the full geometry explanation). Must
-    # stay below stop_distance_m.
-    min_valid_range_m: 0.3
+    # M1 bumper/sensor-placement fix (2026-07-09): the 0.3 self-detection
+    # floor this comment used to describe is gone. The forward self-return
+    # was never the bumper (its z-band [0.008, 0.058] in base_link frame
+    # never reached the scan plane) - it was the forward camera box,
+    # directly in the scan plane's path at the old height (verified by
+    # direct geometric calculation: camera z-band [0.065, 0.085] straddled
+    # the old scan_z=0.0755, at ~0.251-0.271m from the rear-offset LiDAR,
+    # matching the documented self-return distance exactly). Fixed at the
+    # source by raising the LiDAR turret (params.xacro laser_puck_offset)
+    # so the scan plane (z=0.10) clears the camera top by 15mm, rather than
+    # papering over it here. Confirmed live in sim: open-space front-arc
+    # minimum is now ~2.9m (real room geometry), not a ~0.25m self-return.
+    # This floor now only needs to clear the LiDAR's own physical range_min
+    # (0.1m) with a small noise margin - must stay below stop_distance_m.
+    min_valid_range_m: 0.12
     # Forward motion blocked when the front-arc LiDAR minimum (after
     # excluding self-detection below min_valid_range_m) drops below this.
     # 0.35m sits comfortably inside the apartment world's narrowest
