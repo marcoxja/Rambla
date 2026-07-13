@@ -59,7 +59,8 @@ class SafetyNode(Node):
         self._monitor = SafetyMonitor(
             stop_distance_m=self.get_parameter('stop_distance_m').value,
             front_arc_deg=self.get_parameter('front_arc_deg').value,
-            min_valid_range_m=self.get_parameter('min_valid_range_m').value)
+            min_valid_range_m=self.get_parameter('min_valid_range_m').value,
+            clock=lambda: self.get_clock().now().nanoseconds / 1e9)
         self._authority = ControlAuthority(
             clock=lambda: self.get_clock().now().nanoseconds / 1e9)
 

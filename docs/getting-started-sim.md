@@ -79,6 +79,13 @@ intended to work against the real robot later). It provides:
 - A live camera feed
 - Sensor and node debug tabs
 
+## Working with the VM
+
+The sim and gateway run on a dev VM (`rambla-vm`) reached over SSH.
+`scripts/vm.sh` has ready-made functions for starting/stopping/checking on
+both — source it (`source scripts/vm.sh`, or add that line to your shell rc
+file) then run `rambla_vm_help` for the full list.
+
 ## Where to Look Next
 
 - [architecture.md](architecture.md) — how the three compute planes fit

@@ -1,8 +1,12 @@
-"""rclpy side of the control panel: publishes manual drive intent to
-/cmd_vel_teleop from browser joystick input (with a deadman watchdog so a
-dropped connection can't leave the robot driving forever - see deadman.py),
-and republishes sensor/camera/diagnostic data for server.py's websocket and
-MJPEG endpoints to consume.
+"""rclpy side of the gateway (M4, CTL-009): publishes manual drive intent to
+/cmd_vel_teleop from relay-forwarded joystick input (with a deadman watchdog
+so a dropped connection can't leave the robot driving forever - see
+deadman.py), republishes sensor/diagnostics data, and forwards the
+already-compressed camera stream on demand. gateway_client.py owns the
+outbound WSS connections to the hosted relay (Cloudflare Worker + per-robot
+Durable Object - see src/shared/contracts/relay-protocol.md) and wires this
+node's on_* sinks / camera-subscribe requests; this module has no socket
+code of its own so it stays testable/runnable standalone.
 
 /cmd_vel_teleop is *intent*, not the actuator-facing command: rambla_safety's
 SafetyNode is the sole final /cmd_vel publisher and arbitrates AUTO
@@ -14,42 +18,46 @@ timeout sees real silence promptly instead of a forever-repeating stream of
 zeros that would keep MANUAL authority engaged after disconnect.
 
 Runs rclpy.spin on a background thread since rclpy is not asyncio-native;
-FastAPI handlers call this node's methods directly (publishers are
-thread-safe) and this node pushes inbound data to asyncio via the
-loop/queue handed to it by server.py.
+gateway_client's asyncio loop calls this node's methods directly (publishers
+are thread-safe, and camera-subscription changes are debounced through a
+polled flag rather than called cross-thread - see _sync_camera_subscription)
+and this node pushes inbound data to asyncio via the sinks gateway_client
+wires up per connection.
 """
 import threading
 import time
 
-import cv2
 import rclpy
-from cv_bridge import CvBridge
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rosidl_runtime_py.utilities import get_message
-from sensor_msgs.msg import Image, Imu, LaserScan
+from sensor_msgs.msg import CompressedImage, Imu, LaserScan
+from std_msgs.msg import String
 
 from rambla_control_panel.deadman import DeadmanTimer
 
 CMD_VEL_RATE_HZ = 20.0
 SENSOR_PUBLISH_RATE_HZ = 8.0
 DIAGNOSTICS_RATE_HZ = 1.0
+CAMERA_SUBSCRIPTION_POLL_RATE_HZ = 5.0
+TELEMETRY_SUBSCRIPTION_POLL_RATE_HZ = 5.0
 
-# /scan and /camera/image_raw are the raw gz-sim topics - plugins.xacro's
-# <gz_frame_id>/<optical_frame_id> tags already give them plain frame_ids at
-# the source, so no downstream frame-ID republish is needed. /imu/data_fixed
-# is rambla_localization's covariance_injector republish (still needed for
-# non-zero covariance - see covariance_injector.py). /odometry/filtered is
-# the EKF's fused output (ekf.yaml), a better "ground truth" position readout
-# than raw /odom.
+# /scan is the raw gz-sim topic - plugins.xacro's <gz_frame_id> tags already
+# give it a plain frame_id at the source, so no downstream frame-ID
+# republish is needed. /imu/data_fixed is rambla_localization's
+# covariance_injector republish (still needed for non-zero covariance - see
+# covariance_injector.py). /odometry/filtered is the EKF's fused output
+# (ekf.yaml), a better "ground truth" position readout than raw /odom.
+# /camera/image_raw/compressed is the JPEG side-channel from M3
+# (camera_compressor) - forwarded verbatim, never decoded/re-encoded here
+# (M4_PLAN.md: this is what removes the 79% idle-CPU cv_bridge/cv2 cost).
 SCAN_TOPIC = '/scan'
 IMU_TOPIC = '/imu/data_fixed'
 ODOM_TOPIC = '/odometry/filtered'
-CAMERA_TOPIC = '/camera/image_raw'
+CAMERA_COMPRESSED_TOPIC = '/camera/image_raw/compressed'
+CONTROL_AUTHORITY_TOPIC = '/control_authority'
 CMD_VEL_TELEOP_TOPIC = '/cmd_vel_teleop'
-
-CAMERA_JPEG_QUALITY = 70
 
 
 class ControlPanelNode(Node):
@@ -57,27 +65,56 @@ class ControlPanelNode(Node):
     def __init__(self):
         super().__init__('control_panel_node')
 
-        self._cv_bridge = CvBridge()
         self._deadman = DeadmanTimer(clock=time.monotonic)
         self._teleop_was_active = False
-        self._latest_jpeg = None
-        self._latest_jpeg_lock = threading.Lock()
 
-        # Pluggable sinks set by server.py once its event loop exists - kept
-        # as plain callables (not a hard dependency on FastAPI/asyncio here)
-        # so this node stays testable/runnable standalone.
+        # Pluggable sinks set by gateway_client.py once its asyncio loop/ws
+        # connections exist - kept as plain callables (not a hard dependency
+        # on websockets/asyncio here) so this node stays testable/runnable
+        # standalone.
         self.on_scan = None
         self.on_imu = None
         self.on_odom = None
         self.on_diagnostics = None
+        self.on_control_authority = None
+        self.on_camera_frame = None
 
         self._cmd_vel_pub = self.create_publisher(Twist, CMD_VEL_TELEOP_TOPIC, 10)
         self.create_timer(1.0 / CMD_VEL_RATE_HZ, self._publish_cmd_vel)
 
-        self.create_subscription(LaserScan, SCAN_TOPIC, self._on_scan, 10)
-        self.create_subscription(Imu, IMU_TOPIC, self._on_imu, 10)
-        self.create_subscription(Odometry, ODOM_TOPIC, self._on_odom, 10)
-        self.create_subscription(Image, CAMERA_TOPIC, self._on_image, 10)
+        # Sensor subscriptions are on-demand, same shape as the camera below
+        # (M4_PLAN.md Phase 5 follow-up): measured at ~80% mean CPU always-on
+        # regardless of viewers -- IMU alone publishes at ~95Hz and every
+        # tick was processed and forwarded even with zero browsers attached,
+        # which is exactly the always-on cost the camera path was already
+        # fixed to avoid. gateway_client flips _telemetry_wanted from the
+        # asyncio thread on telemetry_subscribe/telemetry_unsubscribe; the
+        # poll timer below does the actual create_subscription/
+        # destroy_subscription on the rclpy spin thread, same reasoning as
+        # _sync_camera_subscription.
+        self._scan_sub = None
+        self._imu_sub = None
+        self._odom_sub = None
+        self._telemetry_wanted = False
+        self.create_timer(
+            1.0 / TELEMETRY_SUBSCRIPTION_POLL_RATE_HZ, self._sync_telemetry_subscriptions)
+        self._last_control_authority_mode = None
+        self.create_subscription(
+            String, CONTROL_AUTHORITY_TOPIC, self._on_control_authority, 10)
+
+        # Camera subscription is on-demand (M4_PLAN.md Phase 1): created only
+        # while >=1 browser viewer is attached, destroyed when the last one
+        # leaves. gateway_client flips _camera_wanted from the asyncio
+        # thread on video_subscribe/video_unsubscribe (a plain bool, GIL-
+        # atomic); the poll timer below is what actually calls
+        # create_subscription/destroy_subscription, and it always runs on
+        # the rclpy spin thread (it's a timer callback), so it never races
+        # the executor's own waitset the way a cross-thread rclpy call
+        # could.
+        self._camera_sub = None
+        self._camera_wanted = False
+        self.create_timer(
+            1.0 / CAMERA_SUBSCRIPTION_POLL_RATE_HZ, self._sync_camera_subscription)
 
         # Callbacks above only overwrite this - the timer below is the only
         # thing that ever reads it and calls the sinks, so a sensor
@@ -93,7 +130,7 @@ class ControlPanelNode(Node):
         self._liveness_subs = {}
         self.create_timer(1.0 / DIAGNOSTICS_RATE_HZ, self._refresh_liveness_subscriptions)
 
-    # --- inbound from browser (called from FastAPI's event loop/thread) ---
+    # --- inbound from the relay (called from gateway_client's asyncio loop) ---
 
     def submit_drive_command(self, linear, angular):
         self._deadman.on_command(linear, angular)
@@ -101,12 +138,20 @@ class ControlPanelNode(Node):
     def submit_disconnect(self):
         self._deadman.on_disconnect()
 
-    def latest_camera_jpeg(self):
-        with self._latest_jpeg_lock:
-            return self._latest_jpeg
+    def request_camera_subscribe(self):
+        self._camera_wanted = True
+
+    def request_camera_unsubscribe(self):
+        self._camera_wanted = False
+
+    def request_telemetry_subscribe(self):
+        self._telemetry_wanted = True
+
+    def request_telemetry_unsubscribe(self):
+        self._telemetry_wanted = False
 
     # --- outbound to /cmd_vel_teleop, at a steady rate regardless of
-    #     browser event jitter - see deadman.py's module docstring ---
+    #     relay event jitter - see deadman.py's module docstring ---
 
     def _publish_cmd_vel(self):
         # command() must run first - it's what actually detects/applies a
@@ -126,7 +171,7 @@ class ControlPanelNode(Node):
         msg.angular.z = angular
         self._cmd_vel_pub.publish(msg)
 
-    # --- sensor subscriptions -> websocket sinks ---
+    # --- sensor subscriptions -> relay sinks ---
 
     def _on_scan(self, msg):
         self._topic_last_seen[SCAN_TOPIC] = time.monotonic()
@@ -168,7 +213,25 @@ class ControlPanelNode(Node):
             'angular_velocity_z': v.angular.z,
         }
 
+    def _sync_telemetry_subscriptions(self):
+        if self._telemetry_wanted and self._scan_sub is None:
+            self._scan_sub = self.create_subscription(LaserScan, SCAN_TOPIC, self._on_scan, 10)
+            self._imu_sub = self.create_subscription(Imu, IMU_TOPIC, self._on_imu, 10)
+            self._odom_sub = self.create_subscription(Odometry, ODOM_TOPIC, self._on_odom, 10)
+        elif not self._telemetry_wanted and self._scan_sub is not None:
+            self.destroy_subscription(self._scan_sub)
+            self.destroy_subscription(self._imu_sub)
+            self.destroy_subscription(self._odom_sub)
+            self._scan_sub = None
+            self._imu_sub = None
+            self._odom_sub = None
+            # Drop stale values rather than re-forwarding the last snapshot
+            # forever once subscriptions (and thus fresh data) stop.
+            self._latest_sensor_data.clear()
+
     def _publish_sensor_snapshot(self):
+        if not self._telemetry_wanted:
+            return
         # Single fixed-rate tick broadcasts whatever's latest per sensor,
         # regardless of how many messages actually arrived since the last
         # tick - see _on_scan/_on_imu/_on_odom, which only overwrite.
@@ -179,28 +242,66 @@ class ControlPanelNode(Node):
         if self.on_odom and 'odom' in self._latest_sensor_data:
             self.on_odom(self._latest_sensor_data['odom'])
 
-    def _on_image(self, msg):
-        self._topic_last_seen[CAMERA_TOPIC] = time.monotonic()
-        frame = self._cv_bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        ok, jpeg = cv2.imencode(
-            '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, CAMERA_JPEG_QUALITY])
-        if ok:
-            with self._latest_jpeg_lock:
-                self._latest_jpeg = jpeg.tobytes()
+    def _on_control_authority(self, msg):
+        self._topic_last_seen[CONTROL_AUTHORITY_TOPIC] = time.monotonic()
+        # Edge-triggered, not the topic's own 20Hz rate: the relay contract
+        # (relay-protocol.md) only needs to know the current mode, and
+        # forwarding every tick would make the control channel far chattier
+        # than the sensor/diagnostics traffic it's meant to stay light next
+        # to (and fights WebSocket Hibernation between real interactions).
+        if msg.data == self._last_control_authority_mode:
+            return
+        self._last_control_authority_mode = msg.data
+        if self.on_control_authority:
+            self.on_control_authority(msg.data)
+
+    def _sync_camera_subscription(self):
+        if self._camera_wanted and self._camera_sub is None:
+            self._camera_sub = self.create_subscription(
+                CompressedImage, CAMERA_COMPRESSED_TOPIC, self._on_camera_frame, 10)
+        elif not self._camera_wanted and self._camera_sub is not None:
+            self.destroy_subscription(self._camera_sub)
+            self._camera_sub = None
+
+    def _on_camera_frame(self, msg):
+        self._topic_last_seen[CAMERA_COMPRESSED_TOPIC] = time.monotonic()
+        if self.on_camera_frame:
+            self.on_camera_frame(bytes(msg.data))
 
     # --- lightweight diagnostics: node/topic liveness, no
     #     diagnostic_aggregator infra - see plan for why this is enough
     #     for a first slice ---
 
     def _refresh_liveness_subscriptions(self):
-        # The four topics this node already type-subscribes to (SCAN_TOPIC
-        # etc.) update _topic_last_seen directly in their callbacks above.
-        # Every OTHER topic in the graph (/scan, /odom, /joint_states, /tf,
-        # ...) needs its own liveness probe or the Nodes tab shows "never"
-        # for topics that are actually alive - this generic (type-erased)
+        if not self._telemetry_wanted:
+            # Same on-demand gate as the sensor subscriptions (Phase 5
+            # follow-up): this probes and subscribes to every topic in the
+            # graph, which is exactly as pointless to keep running with zero
+            # viewers as the sensor callbacks were.
+            if self._liveness_subs:
+                for sub in self._liveness_subs.values():
+                    self.destroy_subscription(sub)
+                self._liveness_subs.clear()
+                self._topic_last_seen.clear()
+            return
+        # The topics this node already type-subscribes to directly (SCAN_TOPIC
+        # etc., plus CONTROL_AUTHORITY_TOPIC) update _topic_last_seen in their
+        # own callbacks above. CAMERA_COMPRESSED_TOPIC is also excluded here
+        # even though its dedicated subscription is only sometimes present
+        # (_sync_camera_subscription) - a generic liveness probe would still
+        # pay the same CompressedImage deserialization cost as a real viewer
+        # subscription, which is exactly the always-on cost the on-demand
+        # design exists to avoid. Its diagnostics "last seen" is only ever
+        # fresh while a viewer is actually attached - that's intentional,
+        # not a bug.
+        #
+        # Every OTHER topic in the graph (/odom, /joint_states, /tf, ...)
+        # needs its own liveness probe or the Nodes tab shows "never" for
+        # topics that are actually alive - this generic (type-erased)
         # subscription just timestamps arrival, it doesn't need to decode
         # the message.
-        tracked_directly = {SCAN_TOPIC, IMU_TOPIC, ODOM_TOPIC, CAMERA_TOPIC}
+        tracked_directly = {SCAN_TOPIC, IMU_TOPIC, ODOM_TOPIC, CONTROL_AUTHORITY_TOPIC,
+                            CAMERA_COMPRESSED_TOPIC}
         live_topics = {name for name, _types in self.get_topic_names_and_types()}
 
         # Drop subscriptions for topics that have left the graph (e.g. a
@@ -235,6 +336,8 @@ class ControlPanelNode(Node):
             self._liveness_subs[topic_name] = sub
 
     def _publish_diagnostics(self):
+        if not self._telemetry_wanted:
+            return
         if not self.on_diagnostics:
             return
         now = time.monotonic()
@@ -259,16 +362,16 @@ def spin_in_background(node):
 
 
 def main():
-    # Entry point: brings up rclpy on a background thread and runs the
-    # FastAPI/uvicorn server (which wires this node's on_* sinks) on the
-    # main thread - see server.py:run().
-    from rambla_control_panel.server import run
+    # Entry point: brings up rclpy on a background thread and runs
+    # gateway_client's asyncio loop (outbound WSS to the relay - see
+    # src/shared/contracts/relay-protocol.md) on the main thread.
+    from rambla_control_panel.gateway_client import run_gateway
 
     rclpy.init()
     node = ControlPanelNode()
     spin_in_background(node)
     try:
-        run(node)
+        run_gateway(node)
     finally:
         node.destroy_node()
         if rclpy.ok():

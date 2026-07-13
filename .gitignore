@@ -18,6 +18,12 @@ dist/
 .next/
 npm-debug.log*
 
+# Wrangler / Cloudflare Workers local state + secrets
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
 # ROS 2 build artifacts
 robot/ros2_ws/build/
 robot/ros2_ws/install/

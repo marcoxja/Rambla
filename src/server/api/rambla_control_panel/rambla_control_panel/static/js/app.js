@@ -35,4 +35,5 @@ window.addEventListener('DOMContentLoaded', () => {
   initJoysticks();
   initCameraFeed();
   initDebugTabs();
+  initControlLease();
 });

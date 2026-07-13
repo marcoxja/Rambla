@@ -12,6 +12,17 @@ def make_ranges(value, count=360):
     return [value] * count
 
 
+class FakeClock:
+    def __init__(self, t=0.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, dt):
+        self.t += dt
+
+
 class TestSafetyMonitor(unittest.TestCase):
 
     def test_unblocked_with_no_input(self):
@@ -101,6 +112,30 @@ class TestSafetyMonitor(unittest.TestCase):
         self.assertTrue(monitor.is_blocked())
         monitor.on_bumper_left(False)
         self.assertFalse(monitor.is_blocked())
+
+    def test_bumper_contact_expires_without_a_release_message(self):
+        # gz-sim's real contact sensor never sends an explicit "contact
+        # ended" message (see DEFAULT_BUMPER_CONTACT_TIMEOUT_S) - so a
+        # stuck-forever block must clear on its own once the timeout
+        # elapses with no fresh True reading, not just on an explicit
+        # on_bumper_left(False) call.
+        clock = FakeClock()
+        monitor = SafetyMonitor(bumper_contact_timeout_s=0.25, clock=clock)
+        monitor.on_bumper_left(True)
+        self.assertTrue(monitor.is_blocked())
+        clock.advance(0.1)
+        self.assertTrue(monitor.is_blocked())
+        clock.advance(0.2)
+        self.assertFalse(monitor.is_blocked())
+
+    def test_repeated_contact_messages_keep_extending_the_deadline(self):
+        clock = FakeClock()
+        monitor = SafetyMonitor(bumper_contact_timeout_s=0.25, clock=clock)
+        monitor.on_bumper_left(True)
+        clock.advance(0.2)
+        monitor.on_bumper_left(True)  # sustained contact, e.g. next 50Hz message
+        clock.advance(0.2)
+        self.assertTrue(monitor.is_blocked())
 
     def test_filter_cmd_zeroes_forward_linear_when_blocked(self):
         monitor = SafetyMonitor()

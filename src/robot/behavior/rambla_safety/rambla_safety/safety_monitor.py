@@ -2,7 +2,8 @@
 
 Kept as a plain class (no ROS message types, no rclpy) so it's unit
 testable without a running node - same shape as rambla_control_panel's
-DeadmanTimer. safety_node.py wraps this with rclpy subscriptions/timers.
+DeadmanTimer, including the injected-clock pattern for the bumper contact
+timeout below. safety_node.py wraps this with rclpy subscriptions/timers.
 
 Two independent trip conditions, either one overrides forward motion:
   - Bumper contact (either side): hard stop, contact already happened.
@@ -10,6 +11,7 @@ Two independent trip conditions, either one overrides forward motion:
 Rotation-in-place is always allowed even while tripped, since turning
 away is the recovery action and can't itself cause the same collision.
 """
+import time
 
 # Historical note (resolved 2026-07-09, M1 bumper/sensor-placement fix):
 # this floor used to mask a real forward self-return of ~0.24-0.27m at
@@ -34,18 +36,33 @@ DEFAULT_STOP_DISTANCE_M = 0.35
 # counterclockwise) - see rambla_description/urdf/plugins.xacro's gpu_lidar
 # config. +/-30 degrees either side of straight ahead.
 DEFAULT_FRONT_ARC_DEG = 30
+# gz-sim's contact sensor (update_rate=50Hz, see plugins.xacro) only
+# publishes Contacts messages while contact is actually ongoing - confirmed
+# live (2026-07-12) that once the robot backs away, the topic goes silent
+# instead of publishing a final empty/false message. A boolean latched
+# purely from the last received message therefore never clears. Bumper
+# contact is instead treated as "current" for this long after the last
+# true reading - several multiples of the ~20ms inter-message gap seen
+# during real sustained contact, so an occasional dropped message doesn't
+# spuriously clear it, while still releasing promptly (well under human
+# reaction time) once contact truly ends.
+DEFAULT_BUMPER_CONTACT_TIMEOUT_S = 0.25
 
 
 class SafetyMonitor:
 
     def __init__(self, stop_distance_m=DEFAULT_STOP_DISTANCE_M,
                  front_arc_deg=DEFAULT_FRONT_ARC_DEG,
-                 min_valid_range_m=DEFAULT_MIN_VALID_RANGE_M):
+                 min_valid_range_m=DEFAULT_MIN_VALID_RANGE_M,
+                 bumper_contact_timeout_s=DEFAULT_BUMPER_CONTACT_TIMEOUT_S,
+                 clock=None):
         self._stop_distance_m = stop_distance_m
         self._front_arc_deg = front_arc_deg
         self._min_valid_range_m = min_valid_range_m
-        self._bumper_left_contact = False
-        self._bumper_right_contact = False
+        self._bumper_contact_timeout_s = bumper_contact_timeout_s
+        self._clock = clock or time.monotonic
+        self._bumper_left_contact_until = None
+        self._bumper_right_contact_until = None
         self._min_front_range = None
 
     def on_scan(self, ranges, angle_min, angle_increment):
@@ -53,13 +70,19 @@ class SafetyMonitor:
             ranges, angle_min, angle_increment)
 
     def on_bumper_left(self, has_contact):
-        self._bumper_left_contact = has_contact
+        self._bumper_left_contact_until = self._contact_deadline(has_contact)
 
     def on_bumper_right(self, has_contact):
-        self._bumper_right_contact = has_contact
+        self._bumper_right_contact_until = self._contact_deadline(has_contact)
+
+    def _contact_deadline(self, has_contact):
+        return self._clock() + self._bumper_contact_timeout_s if has_contact else None
 
     def is_blocked(self):
-        if self._bumper_left_contact or self._bumper_right_contact:
+        now = self._clock()
+        if self._bumper_left_contact_until is not None and now < self._bumper_left_contact_until:
+            return True
+        if self._bumper_right_contact_until is not None and now < self._bumper_right_contact_until:
             return True
         if self._min_front_range is not None and self._min_front_range < self._stop_distance_m:
             return True

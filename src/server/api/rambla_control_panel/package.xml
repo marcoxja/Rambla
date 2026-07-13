@@ -3,7 +3,7 @@
 <package format="3">
   <name>rambla_control_panel</name>
   <version>0.0.1</version>
-  <description>Web-based drive/debug control panel (joystick teleop, camera feed, raw sensor and node diagnostics) for the simulated or real robot.</description>
+  <description>Robot-local gateway (joystick teleop, camera passthrough, sensor/node diagnostics) for the simulated or real robot - dials out to the hosted relay, no inbound ports.</description>
   <maintainer email="jackdemarco.jd@gmail.com">Jack Demarco</maintainer>
   <license>Apache-2.0</license>
 
@@ -11,7 +11,7 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

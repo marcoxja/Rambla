@@ -135,9 +135,10 @@ src/
 │   ├── cognition/        # LLM reasoning, conversation, planning (not started) — future Cognition hosted service; was server/ai/
 │   ├── social/           # Human and animal profiles (not started)
 │   └── api/              # Hosted API / robot-facing relay
-│       └── rambla_control_panel/  # Web joystick teleop, live camera feed, sensor/node debug tabs — Hosted service (README M4)
+│       ├── rambla_control_panel/  # ROS2 gateway: web joystick teleop, live camera feed, sensor/node debug tabs (becomes the M4 robot-local gateway)
+│       └── rambla_relay/    # Cloudflare Worker + per-robot Durable Object — hosted relay, no ROS2 (M4, CTL-009)
 └── shared/
-    └── contracts/        # Contracts, schemas, shared docs — `robot-interface.md`, `observation-batch.md`, `map-artifact.md` (Roadmap M2)
+    └── contracts/        # Contracts, schemas, shared docs — `robot-interface.md`, `relay-protocol.md` (M4), `observation-batch.md`, `map-artifact.md` (Roadmap M2)
 
 scripts/                  # Setup and helper scripts
 docs/                     # Polished, external-facing documentation (generated periodically)
@@ -258,10 +259,10 @@ Takes the sim-only control panel (`rambla_control_panel`, built in M0) to a
 hosted, securely-reachable deployment without exposing ROS 2 directly to
 the public internet — see audit finding #10 for the full rationale.
 
-- [ ] Deploy to a hosted platform (e.g. Vercel or equivalent) behind basic authentication
-- [ ] Add a controlled robot-facing relay/API in front of ROS 2 — no direct public ROS 2 exposure
-- [ ] Default to read-only diagnostics (camera feed, sensor/debug tabs); gate teleop behind an explicit action, protected more strongly than basic dashboard viewing
-- [ ] Handle the robot-unreachable case gracefully (offline state, no hung UI)
+- [x] Deploy to a hosted platform (e.g. Vercel or equivalent) behind basic authentication — Cloudflare Worker + per-robot Durable Object, `wrangler deploy`, basic auth on `/ws/*` and the static UI
+- [x] Add a controlled robot-facing relay/API in front of ROS 2 — no direct public ROS 2 exposure — robot-local gateway dials outbound only, no inbound port
+- [x] Default to read-only diagnostics (camera feed, sensor/debug tabs); gate teleop behind an explicit action, protected more strongly than basic dashboard viewing — control-authority lease (CTL-010)
+- [x] Handle the robot-unreachable case gracefully (offline state, no hung UI) — `robot_status` online/offline signal, gateway reconnect-with-backoff, verified live (M4_PLAN.md Phase 4)
 
 _Done when: the control panel is reachable from the public internet with basic auth, ROS 2 itself is not directly exposed, and teleop is harder to reach than read-only viewing._
 

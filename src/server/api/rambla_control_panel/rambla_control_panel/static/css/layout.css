@@ -51,8 +51,31 @@ html, body {
   background: #2a2f38;
 }
 
-#connection-indicator {
+#control-status {
   margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+#control-status.driving { color: var(--accent); }
+#control-status.held-elsewhere { color: var(--danger); }
+#control-status.offline { color: var(--danger); }
+
+#take-control-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#take-control-btn:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+#connection-indicator {
   font-size: 14px;
 }
 #connection-indicator.connected { color: var(--ok); }
@@ -99,6 +122,10 @@ main {
 }
 .joystick[data-axis="linear"] { left: 24px; }
 .joystick[data-axis="angular"] { right: 24px; }
+.joystick.locked {
+  pointer-events: none;
+  opacity: 0.35;
+}
 
 /* --- Debug tabs (desktop default: dense grid) --- */
 

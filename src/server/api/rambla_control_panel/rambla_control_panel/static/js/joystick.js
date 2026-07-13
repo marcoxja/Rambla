@@ -80,11 +80,27 @@ function setupJoystick(canvas) {
   };
 }
 
+// Gates both the visual/pointer state of the two joystick canvases and
+// whether the send loop below actually publishes cmd_vel — Phase 3
+// (control-authority lease). Read-only by default; lease.js flips this only
+// on `lease_granted` and flips it back off on any loss of the lease.
+let controlEnabled = false;
+
+function setControlEnabled(enabled) {
+  controlEnabled = enabled;
+  document.querySelectorAll('.joystick').forEach((canvas) => {
+    canvas.classList.toggle('locked', !enabled);
+  });
+}
+
 function initJoysticks() {
   const leftStick = setupJoystick(document.getElementById('joystick-left'));
   const rightStick = setupJoystick(document.getElementById('joystick-right'));
 
+  setControlEnabled(false);
+
   setInterval(() => {
+    if (!controlEnabled) return;
     const linear = leftStick.getValue() * MAX_LINEAR;
     const angular = rightStick.getValue() * MAX_ANGULAR;
     RamblaWS.sendCmdVel(linear, angular);
