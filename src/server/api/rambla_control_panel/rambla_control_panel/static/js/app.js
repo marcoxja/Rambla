@@ -33,6 +33,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initConnectionIndicator();
   initViewportClass();
   initJoysticks();
+  initKeyboardControl();
   initCameraFeed();
   initDebugTabs();
   initControlLease();

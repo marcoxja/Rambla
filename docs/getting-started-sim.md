@@ -26,23 +26,25 @@ each with a distinct role:
   (Physical dimensions here are placeholders per `PHY-004` in the design
   spec, not a committed form factor.)
 
-- **`rambla_sim`** — the apartment-scale scenario. Multi-room apartment
-  worlds plus the launch file that spawns the robot and bridges all its
-  sensor and control topics into ROS2.
+- **`rambla_sim`** — the house-scale scenario. The multi-room house world
+  plus the launch file that spawns the robot and bridges all its sensor and
+  control topics into ROS2.
 
 - **`rambla_bagging`** — records an observation batch (rosbag2/MCAP) of the
   stable sensor topic contract during a sim run, for later SLAM/mapping
   processing.
 
-## The Apartment World
+## The House World
 
-`rambla_sim` launches Rambla into a multi-room apartment and exposes the
-following ROS2 topics. Two worlds are available via the `world` launch
-argument: `apartment_world` (default, hand-authored 3-room layout) and
-`house` (adopted 6-room apartment layout, per `SIM-003`):
+`rambla_sim` launches Rambla into a multi-room house and exposes the
+following ROS2 topics. `house` (adopted 6-room layout, per `SIM-003`, 16x12m)
+is the only and default world — the original hand-authored `apartment_world`
+placeholder (3-room, 8x6m) was removed after its mismatch with the
+M5-recorded `map_v001` (captured in `house`) repeatedly caused confusion,
+including AMCL structurally failing to converge when launched against it:
 
 ```
-ros2 launch rambla_sim apartment_world.launch.py world:=house
+ros2 launch rambla_sim apartment_world.launch.py
 ```
 
 | Topic | Purpose |

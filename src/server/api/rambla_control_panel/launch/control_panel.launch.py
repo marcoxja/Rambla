@@ -14,9 +14,9 @@ def generate_launch_description():
     #   ros2 launch rambla_control_panel control_panel.launch.py
     #
     # Defaults match rambla_relay/.dev.vars.example so the local
-    # wrangler-dev loop (M4_PLAN.md Phase 1) works with no overrides;
-    # override robot_token if your local .dev.vars differs, and
-    # relay_url when pointing at a deployed Worker (Phase 2+).
+    # wrangler-dev loop works with no overrides; override robot_token if
+    # your local .dev.vars differs, and relay_url when pointing at a
+    # deployed Worker.
     relay_url_arg = DeclareLaunchArgument(
         'relay_url', default_value='ws://localhost:8787',
         description='Base wss:// URL of the relay (Cloudflare Worker / local wrangler dev).')
@@ -29,7 +29,7 @@ def generate_launch_description():
     stats_file_arg = DeclareLaunchArgument(
         'stats_file', default_value='/tmp/rambla_gateway_stats.json',
         description='Path the gateway writes per-channel bandwidth counters to '
-                     '(M4_PLAN.md Phase 5 measurement; read by scripts/sample_resources.py).')
+                     '(read by scripts/sample_resources.py).')
 
     control_panel = Node(
         package='rambla_control_panel',

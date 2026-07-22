@@ -52,7 +52,7 @@ function parseTag(tag: string | undefined): [Role, Channel] | null {
 // attached browser control socket — relay-protocol.md's "DO -> Browser"
 // table (passthrough row).
 const TELEMETRY_PASSTHROUGH_TYPES = new Set([
-  'sensor_scan', 'sensor_imu', 'sensor_odom', 'diagnostics', 'control_authority',
+  'sensor_scan', 'sensor_imu', 'sensor_odom', 'sensor_pose', 'diagnostics', 'control_authority',
 ]);
 
 // relay-protocol.md lease timing: 1.5s holder heartbeat, 5s TTL (~3 missed

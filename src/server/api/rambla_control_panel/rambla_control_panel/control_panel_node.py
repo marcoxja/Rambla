@@ -28,7 +28,7 @@ import threading
 import time
 
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rosidl_runtime_py.utilities import get_message
@@ -49,12 +49,21 @@ TELEMETRY_SUBSCRIPTION_POLL_RATE_HZ = 5.0
 # covariance_injector republish (still needed for non-zero covariance - see
 # covariance_injector.py). /odometry/filtered is the EKF's fused output
 # (ekf.yaml), a better "ground truth" position readout than raw /odom.
+# /amcl_pose (M5 Phase 7) is nav2_amcl's map-frame pose+covariance -
+# PoseWithCovarianceStamped, default (RELIABLE) QoS, same as
+# localization_monitor's own subscription. /localization_status is the
+# monitor's confidence state machine (std_msgs/String) - folded into the
+# sensor_pose snapshot below rather than forwarded as its own sink, since it
+# has no meaning to a viewer except as an attribute of the pose it qualifies.
 # /camera/image_raw/compressed is the JPEG side-channel from M3
 # (camera_compressor) - forwarded verbatim, never decoded/re-encoded here
-# (M4_PLAN.md: this is what removes the 79% idle-CPU cv_bridge/cv2 cost).
+# (this is what removes cv_bridge/cv2 from the gateway's idle-CPU cost -
+# see robot/resource-budget/CLAUDE.md's measurement log).
 SCAN_TOPIC = '/scan'
 IMU_TOPIC = '/imu/data_fixed'
 ODOM_TOPIC = '/odometry/filtered'
+AMCL_POSE_TOPIC = '/amcl_pose'
+LOCALIZATION_STATUS_TOPIC = '/localization_status'
 CAMERA_COMPRESSED_TOPIC = '/camera/image_raw/compressed'
 CONTROL_AUTHORITY_TOPIC = '/control_authority'
 CMD_VEL_TELEOP_TOPIC = '/cmd_vel_teleop'
@@ -75,6 +84,7 @@ class ControlPanelNode(Node):
         self.on_scan = None
         self.on_imu = None
         self.on_odom = None
+        self.on_pose = None
         self.on_diagnostics = None
         self.on_control_authority = None
         self.on_camera_frame = None
@@ -82,12 +92,13 @@ class ControlPanelNode(Node):
         self._cmd_vel_pub = self.create_publisher(Twist, CMD_VEL_TELEOP_TOPIC, 10)
         self.create_timer(1.0 / CMD_VEL_RATE_HZ, self._publish_cmd_vel)
 
-        # Sensor subscriptions are on-demand, same shape as the camera below
-        # (M4_PLAN.md Phase 5 follow-up): measured at ~80% mean CPU always-on
-        # regardless of viewers -- IMU alone publishes at ~95Hz and every
-        # tick was processed and forwarded even with zero browsers attached,
-        # which is exactly the always-on cost the camera path was already
-        # fixed to avoid. gateway_client flips _telemetry_wanted from the
+        # Sensor subscriptions are on-demand, same shape as the camera below:
+        # ungated, this measured at ~80% mean CPU always-on regardless of
+        # viewers -- IMU alone publishes at ~95Hz and every tick was
+        # processed and forwarded even with zero browsers attached, which is
+        # exactly the always-on cost the camera path was already fixed to
+        # avoid (see robot/resource-budget/CLAUDE.md's measurement log).
+        # gateway_client flips _telemetry_wanted from the
         # asyncio thread on telemetry_subscribe/telemetry_unsubscribe; the
         # poll timer below does the actual create_subscription/
         # destroy_subscription on the rclpy spin thread, same reasoning as
@@ -95,6 +106,9 @@ class ControlPanelNode(Node):
         self._scan_sub = None
         self._imu_sub = None
         self._odom_sub = None
+        self._pose_sub = None
+        self._localization_status_sub = None
+        self._latest_localization_status = None
         self._telemetry_wanted = False
         self.create_timer(
             1.0 / TELEMETRY_SUBSCRIPTION_POLL_RATE_HZ, self._sync_telemetry_subscriptions)
@@ -102,7 +116,7 @@ class ControlPanelNode(Node):
         self.create_subscription(
             String, CONTROL_AUTHORITY_TOPIC, self._on_control_authority, 10)
 
-        # Camera subscription is on-demand (M4_PLAN.md Phase 1): created only
+        # Camera subscription is on-demand: created only
         # while >=1 browser viewer is attached, destroyed when the last one
         # leaves. gateway_client flips _camera_wanted from the asyncio
         # thread on video_subscribe/video_unsubscribe (a plain bool, GIL-
@@ -213,18 +227,42 @@ class ControlPanelNode(Node):
             'angular_velocity_z': v.angular.z,
         }
 
+    def _on_pose(self, msg):
+        self._topic_last_seen[AMCL_POSE_TOPIC] = time.monotonic()
+        p = msg.pose.pose.position
+        o = msg.pose.pose.orientation
+        self._latest_sensor_data['pose'] = {
+            'position': {'x': p.x, 'y': p.y, 'z': p.z},
+            'orientation': {'x': o.x, 'y': o.y, 'z': o.z, 'w': o.w},
+            'covariance': list(msg.pose.covariance),
+            'status': self._latest_localization_status,
+        }
+
+    def _on_localization_status(self, msg):
+        self._topic_last_seen[LOCALIZATION_STATUS_TOPIC] = time.monotonic()
+        self._latest_localization_status = msg.data
+
     def _sync_telemetry_subscriptions(self):
         if self._telemetry_wanted and self._scan_sub is None:
             self._scan_sub = self.create_subscription(LaserScan, SCAN_TOPIC, self._on_scan, 10)
             self._imu_sub = self.create_subscription(Imu, IMU_TOPIC, self._on_imu, 10)
             self._odom_sub = self.create_subscription(Odometry, ODOM_TOPIC, self._on_odom, 10)
+            self._pose_sub = self.create_subscription(
+                PoseWithCovarianceStamped, AMCL_POSE_TOPIC, self._on_pose, 10)
+            self._localization_status_sub = self.create_subscription(
+                String, LOCALIZATION_STATUS_TOPIC, self._on_localization_status, 10)
         elif not self._telemetry_wanted and self._scan_sub is not None:
             self.destroy_subscription(self._scan_sub)
             self.destroy_subscription(self._imu_sub)
             self.destroy_subscription(self._odom_sub)
+            self.destroy_subscription(self._pose_sub)
+            self.destroy_subscription(self._localization_status_sub)
             self._scan_sub = None
             self._imu_sub = None
             self._odom_sub = None
+            self._pose_sub = None
+            self._localization_status_sub = None
+            self._latest_localization_status = None
             # Drop stale values rather than re-forwarding the last snapshot
             # forever once subscriptions (and thus fresh data) stop.
             self._latest_sensor_data.clear()
@@ -241,6 +279,8 @@ class ControlPanelNode(Node):
             self.on_imu(self._latest_sensor_data['imu'])
         if self.on_odom and 'odom' in self._latest_sensor_data:
             self.on_odom(self._latest_sensor_data['odom'])
+        if self.on_pose and 'pose' in self._latest_sensor_data:
+            self.on_pose(self._latest_sensor_data['pose'])
 
     def _on_control_authority(self, msg):
         self._topic_last_seen[CONTROL_AUTHORITY_TOPIC] = time.monotonic()
@@ -300,7 +340,8 @@ class ControlPanelNode(Node):
         # topics that are actually alive - this generic (type-erased)
         # subscription just timestamps arrival, it doesn't need to decode
         # the message.
-        tracked_directly = {SCAN_TOPIC, IMU_TOPIC, ODOM_TOPIC, CONTROL_AUTHORITY_TOPIC,
+        tracked_directly = {SCAN_TOPIC, IMU_TOPIC, ODOM_TOPIC, AMCL_POSE_TOPIC,
+                            LOCALIZATION_STATUS_TOPIC, CONTROL_AUTHORITY_TOPIC,
                             CAMERA_COMPRESSED_TOPIC}
         live_topics = {name for name, _types in self.get_topic_names_and_types()}
 

@@ -60,6 +60,14 @@ html, body {
 #control-status.held-elsewhere { color: var(--danger); }
 #control-status.offline { color: var(--danger); }
 
+#kbd-status {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
 #take-control-btn {
   background: transparent;
   border: 1px solid var(--border);

@@ -31,3 +31,11 @@ robot/ros2_ws/log/
 
 # Gazebo / sim generated files
 *.log
+
+# scripts/vm.sh: timestamped local artifacts pulled back from rambla-vm
+# (rambla_vm_sample, rambla_verify) land in whatever the caller's cwd was
+rambla_sample_*.csv
+rambla_verify_*.json
+rambla_likelihood_snapshots_*.json
+rambla_likelihood_report_*.json
+rambla_sweep_*.json

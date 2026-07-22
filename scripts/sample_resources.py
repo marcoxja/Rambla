@@ -40,12 +40,19 @@ PATTERNS = [
     ("ekf_node", False, "ekf_filter_node"),
     ("safety_node", False, "safety_node"),
     # M4 (CTL-009): the FastAPI/uvicorn server.py this used to match was
-    # retired in Phase 1 -- the process is now the outbound-dialing gateway,
-    # relabeled to match (see M4_PLAN.md Phase 5).
+    # retired -- the process is now the outbound-dialing gateway, relabeled
+    # to match.
     ("rambla_control_panel", False, "gateway"),
+    # M5 localization stack: real nodes (not sim-only), same classification
+    # as EKF/safety -- this is what M5_PLAN.md's resource-budget
+    # verification item samples.
+    ("map_server", False, "map_server"),
+    ("amcl", False, "amcl"),
+    ("localization_monitor", False, "localization_monitor"),
+    ("localization_probe", False, "localization_probe"),
 ]
 
-# Bandwidth (M4_PLAN.md Phase 5): the gateway writes its own per-channel
+# Bandwidth: the gateway writes its own per-channel
 # byte-rate counters here (bandwidth_stats.py) since this script, as an
 # external process, has no way to read them out of the gateway's memory --
 # see gateway_client.py's RAMBLA_GATEWAY_STATS_FILE. Only ever attributed to
@@ -113,7 +120,7 @@ def main():
 
     time.sleep(args.interval)  # let the primed cpu_percent() timers accumulate a real delta
 
-    # Secondary aggregate cross-check only (M4_PLAN.md Phase 5) -- host-wide
+    # Secondary aggregate cross-check only -- host-wide
     # interface totals, not the per-channel number the gateway's own
     # counters provide. io_start/io_end bracket the whole sampling run.
     io_start = psutil.net_io_counters(pernic=False)

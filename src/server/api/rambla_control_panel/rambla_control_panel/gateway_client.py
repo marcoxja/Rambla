@@ -53,12 +53,11 @@ class GatewayClient:
             self._run_stats_writer(),
         )
 
-    # Bandwidth measurement (M4_PLAN.md Phase 5): the sampling script
-    # (scripts/sample_resources.py) is external to this process and has no
-    # way to read in-memory counters, so periodically flush a rolling
-    # bytes/sec figure per channel to a local file it can poll. A file, not
-    # a socket/HTTP endpoint - the whole point of M4 is that the gateway
-    # opens no inbound port (verification item 8).
+    # Bandwidth measurement: the sampling script (scripts/sample_resources.py)
+    # is external to this process and has no way to read in-memory counters,
+    # so periodically flush a rolling bytes/sec figure per channel to a
+    # local file it can poll. A file, not a socket/HTTP endpoint - the whole
+    # point of M4 is that the gateway opens no inbound port.
     async def _run_stats_writer(self):
         while True:
             await asyncio.sleep(STATS_WRITE_INTERVAL_S)
@@ -85,7 +84,7 @@ class GatewayClient:
             # driver is still trying to control the robot. Trip the deadman
             # immediately rather than waiting out its own 0.3s timeout, so
             # /cmd_vel_teleop goes silent as fast as possible (the relay is
-            # a coordination layer, not the final backstop - M4_PLAN.md).
+            # a coordination layer, not the final backstop).
             self._node.submit_disconnect()
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX_S)
@@ -116,6 +115,7 @@ class GatewayClient:
         self._node.on_scan = lambda data: _enqueue({'type': 'sensor_scan', 'data': data})
         self._node.on_imu = lambda data: _enqueue({'type': 'sensor_imu', 'data': data})
         self._node.on_odom = lambda data: _enqueue({'type': 'sensor_odom', 'data': data})
+        self._node.on_pose = lambda data: _enqueue({'type': 'sensor_pose', 'data': data})
         self._node.on_diagnostics = lambda data: _enqueue({'type': 'diagnostics', 'data': data})
         self._node.on_control_authority = (
             lambda mode: _enqueue({'type': 'control_authority', 'mode': mode}))
@@ -138,6 +138,7 @@ class GatewayClient:
             self._node.on_scan = None
             self._node.on_imu = None
             self._node.on_odom = None
+            self._node.on_pose = None
             self._node.on_diagnostics = None
             self._node.on_control_authority = None
 

@@ -1,11 +1,10 @@
-"""Per-channel bandwidth counters for the gateway (M4_PLAN.md Phase 5).
+"""Per-channel bandwidth counters for the gateway.
 
 scripts/sample_resources.py runs as a separate process and has no way to
 read this one's in-memory counters, so BandwidthStats periodically flushes
 a rolling bytes/sec figure per channel to a small JSON file instead of a
-socket/HTTP endpoint - the gateway opens no inbound port by design
-(M4_PLAN.md verification item 8), and this shouldn't be the thing that
-changes that.
+socket/HTTP endpoint - the gateway opens no inbound port by design (see
+relay-protocol.md), and this shouldn't be the thing that changes that.
 """
 import json
 import os

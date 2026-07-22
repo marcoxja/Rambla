@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'rambla_localization'
+package_name = 'rambla_navigation'
 
 setup(
     name=package_name,
@@ -11,22 +11,20 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch',
-            ['launch/ekf.launch.py', 'launch/localize.launch.py']),
+            ['launch/navigate.launch.py']),
         ('share/' + package_name + '/config',
-            ['config/ekf.yaml', 'config/amcl.yaml']),
+            ['config/nav2.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Jack Demarco',
     maintainer_email='jackdemarco.jd@gmail.com',
-    description='EKF sensor fusion (robot_localization) combining wheel odometry and IMU into a filtered pose/velocity estimate.',
+    description='Nav2 goal navigation against the M5 localization stack: Nav2 bring-up plus behavior_supervisor, the sole /cmd_vel_raw writer.',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'covariance_injector = rambla_localization.covariance_injector:main',
-            'localization_monitor = rambla_localization.localization_monitor:main',
-            'localization_probe = rambla_localization.localization_probe:main',
-            'verify_localization = rambla_localization.verify_localization:main',
+            'behavior_supervisor = rambla_navigation.behavior_supervisor:main',
+            'verify_navigation = rambla_navigation.verify_navigation:main',
         ],
     },
 )

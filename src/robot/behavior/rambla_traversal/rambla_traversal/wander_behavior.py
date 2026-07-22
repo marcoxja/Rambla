@@ -1,7 +1,7 @@
 """Pure, rclpy-independent reactive wander decision logic.
 
 Deliberately not a general-purpose navigation/planning system: this only
-needs to keep the robot moving through the apartment world long enough to
+needs to keep the robot moving through the house world long enough to
 cross at least one doorway and produce a usable mapping bag (per
 .claude/internal-docs/compute/slam/plans/real-map-plan-2026-07-06.md's
 "~30-60s, crosses one doorway" recording target) - not to reach a

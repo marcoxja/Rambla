@@ -23,7 +23,7 @@ and always-on, and it never depends on the network to do its job. It owns:
 - Sensor fusion (EKF) for a filtered pose estimate
 - Localization — lightweight scan-matching against a cached map
 - Drive arbitration
-- Navigation (Nav2 is the leading candidate, not yet committed)
+- Navigation — Nav2 (decided M6, 2026-07-15; see OQ-003)
 
 If every other plane disappeared, this is the layer that keeps the robot
 from hurting itself, a person, a pet, or the furniture.
@@ -75,7 +75,7 @@ artifact is currently cached.
     ┌─────────────────────────────────────────────────────┐
     │  Raspberry Pi 5 · ROS2 Jazzy                         │
     │  e-stop · collision avoidance · EKF · localization   │
-    │  drive arbitration · navigation (Nav2 candidate)     │
+    │  drive arbitration · navigation (Nav2, decided M6)   │
     └───────────────┬─────────────────────▲───────────────┘
                      │ observation batch    │ versioned map
                      │ (deliberate map run)  │ artifact (cached, read-only)
@@ -99,8 +99,8 @@ If burst compute or the network is unavailable:
 
 - **Reflex safety is unaffected.** E-stop and collision avoidance never
   depended on remote compute in the first place.
-- **Navigation and dock-return keep working** against the last cached map
-  artifact.
+- **Navigation and dock-return will keep working** against the last cached map
+  artifact *(nav stack not yet implemented — target behavior for M7+).*
 - The robot idles or falls back to a safe default rather than freezing or
   waiting on a connection that may not come back.
 
@@ -112,14 +112,14 @@ control of the robot.
 **Settled:**
 
 - SLAM package: RTAB-Map
+- Localization: `nav2_amcl` — global localization against the cached map, with kidnapped-robot recovery
+- Navigation stack: Nav2 — decided M6, 2026-07-15 (see OQ-003 in [DESIGN_SPEC.md](../DESIGN_SPEC.md))
 - Middleware: ROS2 Jazzy
 - Robot compute: Raspberry Pi 5
 - Simulation middleware: Gazebo Harmonic
 
 **Open / candidate, not committed:**
 
-- Navigation stack — Nav2 is the leading candidate (see `OQ-003` in
-  [DESIGN_SPEC.md](../DESIGN_SPEC.md))
 - Persistent-state backend — Supabase is a candidate (see `OQ-014`)
 - Hosted cognition/LLM stack — undecided
 - Event/cognition history storage and schema — undecided (see `OQ-015`)

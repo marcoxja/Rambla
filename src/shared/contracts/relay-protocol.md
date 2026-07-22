@@ -1,16 +1,20 @@
 # Relay Protocol Contract
 
-Wire protocol for the M4 hosted-relay boundary (`M4_PLAN.md`, CTL-008/009/010,
-INT-005): the robot-local gateway ⇄ Cloudflare Worker/Durable Object ⇄
-browser link. Companion to `robot-interface.md`, which stays the canonical
-ROS 2 contract — this doc starts where ROS 2 stops, at the gateway's outbound
-WebSocket boundary. Nothing here changes `robot-interface.md`'s topic table;
-the gateway is a client of it, not a new producer, except where noted below
+Wire protocol for the M4 hosted-relay boundary (CTL-008/009/010, INT-005):
+the robot-local gateway ⇄ Cloudflare Worker/Durable Object ⇄ browser link.
+Companion to `robot-interface.md`, which stays the canonical ROS 2 contract
+— this doc starts where ROS 2 stops, at the gateway's outbound WebSocket
+boundary. Nothing here changes `robot-interface.md`'s topic table; the
+gateway is a client of it, not a new producer, except where noted below
 (`/control_authority`).
 
-Phase 0 (this doc): protocol frozen, nothing implemented. Phase 1 implements
-the gateway side against a local `wrangler dev` DO; Phase 2 deploys; Phase 3
-adds the lease; Phase 4 finishes video isolation + offline handling.
+**Status: implemented and deployed.** The gateway
+(`src/server/api/rambla_control_panel`) and the relay
+(`src/server/api/rambla_relay`, this doc's other endpoint) both implement the
+full protocol below — auth (layers 1-2), the control-authority lease (layer
+3), on-demand video/telemetry subscriptions, and the online/offline signal —
+verified end-to-end against the deployed Cloudflare Worker/DO and the sim VM.
+See `rambla_relay/README.md`'s Status section for what was verified and when.
 
 ---
 
@@ -30,15 +34,16 @@ via `idFromName(robot_id)`); M4 ships with exactly one configured robot, and
 the static UI defaults to it without the user picking one.
 
 Control and video are separate sockets on both hops specifically so a large
-JPEG frame can never head-of-line-block a control/lease message (M4_PLAN.md
-"video must not delay control/safety"). Nothing on the video channel is ever
-control-bearing, and nothing on the control channel is ever binary image
-data — see "Video-channel framing" below for the one exception that proves
-this (`video_subscribe`/`video_unsubscribe`, which rides control, not video,
+JPEG frame can never head-of-line-block a control/lease message — "video must
+not delay control/safety" is a hard design constraint, not an
+optimization. Nothing on the video channel is ever control-bearing, and
+nothing on the control channel is ever binary image data — see
+"Video-channel framing" below for the one exception that proves this
+(`video_subscribe`/`video_unsubscribe`, which rides control, not video,
 precisely to keep video purely-binary and one-directional).
 
 The gateway keeps both connections open for its whole lifetime once
-connected; "on-demand" (M4_PLAN.md) refers to the **ROS subscription** to
+connected; "on-demand" refers to the **ROS subscription** to
 `/camera/image_raw/compressed`, not the WSS connection itself — the gateway
 subscribes only while the DO has ≥1 attached browser video-socket and
 unsubscribes when it drops to 0 (see `video_subscribe`/`video_unsubscribe`).
@@ -103,8 +108,8 @@ browser can forge or infer.
   staying a full order of magnitude coarser than the robot-local 0.3 s
   (deadman) / 0.4 s (`rambla_safety`) backstops — this lease is the outer,
   coarse bound; the robot-local timeouts remain the fine-grained final
-  authority regardless of relay/lease state (defense in depth, per
-  `M4_PLAN.md`).
+  authority regardless of relay/lease state (defense in depth: the lease is
+  a coordination/UX layer, never the last line of defense).
 - **Release — three paths, all immediate (no need to wait out the TTL):**
   1. Explicit `release_control` from the current holder.
   2. The holder's control-channel WebSocket closes (tab closed, network
@@ -139,6 +144,7 @@ for `/ws`, just extended with new types and a hop in the middle.
 | `sensor_scan` | same payload shape as today's `on_scan` sink | Forwarded verbatim at `SENSOR_PUBLISH_RATE_HZ` (8 Hz), **on-demand only** (Phase 5 follow-up — see `telemetry_subscribe` below). |
 | `sensor_imu` | same payload shape as today's `on_imu` sink | ″ |
 | `sensor_odom` | same payload shape as today's `on_odom` sink | ″ |
+| `sensor_pose` | same payload shape as today's `on_pose` sink (`position`, `orientation`, `covariance`, `status`) | M5 Phase 7: AMCL's `/amcl_pose` (map-frame pose+covariance) plus the current `/localization_status` value folded in as `status`. Forwarded at the same `SENSOR_PUBLISH_RATE_HZ` snapshot cadence, **on-demand only** — same gate as the sensor rows above (not its own subscription lifecycle). |
 | `diagnostics` | same payload shape as today's `on_diagnostics` sink | 1 Hz, **on-demand only** — same gate as the sensor rows. |
 | `control_authority` | `mode`: `"AUTO"` \| `"MANUAL"` | Gateway subscription to `/control_authority` (`robot-interface.md`), added in Phase 1. Edge-triggered and cheap regardless of viewers — **not** gated by `telemetry_subscribe`. |
 
@@ -149,7 +155,7 @@ for `/ws`, just extended with new types and a hop in the middle.
 | `cmd_vel` | `linear`, `angular` | Only ever forwarded by the DO from the current lease holder (layer 3); gateway calls the existing `DeadmanTimer.on_command` unchanged. |
 | `video_subscribe` | — | Sent on the DO's browser-side video-viewer count going 0→1 (or on a robot control-socket reconnect if a viewer is already attached — Phase 4 fix). Gateway creates the `/camera/image_raw/compressed` subscription. |
 | `video_unsubscribe` | — | Sent on viewer count going 1→0. Gateway destroys the subscription. |
-| `telemetry_subscribe` | — | **Phase 5 follow-up.** Sent on the DO's browser-side *control*-socket count going 0→1, or on a robot control-socket reconnect if a browser control socket is already attached (same reconnect-resync shape as `video_subscribe`). Gateway creates the `/scan`, `/imu/data_fixed`, `/odometry/filtered` subscriptions and resumes the diagnostics/liveness timers. Measured (M4_PLAN.md Phase 5) at ~80% mean CPU always-on regardless of viewers — the raw sensor callbacks (IMU is ~95 Hz) and the 1 Hz whole-graph liveness probe were never gated by anything, unlike the camera path M4 was built around. |
+| `telemetry_subscribe` | — | Sent on the DO's browser-side *control*-socket count going 0→1, or on a robot control-socket reconnect if a browser control socket is already attached (same reconnect-resync shape as `video_subscribe`). Gateway creates the `/scan`, `/imu/data_fixed`, `/odometry/filtered` subscriptions and resumes the diagnostics/liveness timers. Without this gate, the raw sensor callbacks (IMU is ~95 Hz) and the 1 Hz whole-graph liveness probe ran always-on regardless of viewers, measured at ~80% mean CPU — see `robot/resource-budget/CLAUDE.md`'s 2026-07-12 measurement log for the full before/after numbers. |
 | `telemetry_unsubscribe` | — | Sent on browser control-socket count going 1→0. Gateway destroys the sensor subscriptions and stops the diagnostics/liveness timers. |
 
 ### Browser → DO
@@ -165,7 +171,7 @@ for `/ws`, just extended with new types and a hop in the middle.
 
 | `type` | Fields | Notes |
 |---|---|---|
-| `sensor_scan` / `sensor_imu` / `sensor_odom` / `diagnostics` | passthrough | Fanned out to every connected browser verbatim, unchanged shape from today's UI expectations. Only arrives at all while `telemetry_subscribe` is active on the gateway side — see the Gateway → DO table. |
+| `sensor_scan` / `sensor_imu` / `sensor_odom` / `sensor_pose` / `diagnostics` | passthrough | Fanned out to every connected browser verbatim, unchanged shape from today's UI expectations. Only arrives at all while `telemetry_subscribe` is active on the gateway side — see the Gateway → DO table. |
 | `control_authority` | `mode` | Passthrough of the gateway's new subscription. |
 | `robot_status` | `online`: bool | Pushed on every robot control-socket connect/disconnect, and once immediately to any browser on its own connect (so a late joiner isn't stuck waiting on a delta). |
 | `lease_state` | `held`: bool, `holder_id?`, `expires_in_ms?` | Broadcast on every acquire/release/expire, and once immediately on a new browser connect. |

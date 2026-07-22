@@ -86,8 +86,23 @@ function setupJoystick(canvas) {
 // on `lease_granted` and flips it back off on any loss of the lease.
 let controlEnabled = false;
 
+// Keyboard drive contribution (keyboard.js), in the same m/s / rad/s units
+// as the joystick terms below - added, not swapped, so both input methods
+// can be used together.
+let keyLinear = 0;
+let keyAngular = 0;
+
+function setKeyVelocity(linear, angular) {
+  keyLinear = linear;
+  keyAngular = angular;
+}
+
 function setControlEnabled(enabled) {
   controlEnabled = enabled;
+  // Every lease transition resets keyboard state (see keyboard.js's
+  // resetKeyboardState) so a key held through a lease loss/regrant can't
+  // silently resume driving via the OS's keydown auto-repeat.
+  resetKeyboardState();
   document.querySelectorAll('.joystick').forEach((canvas) => {
     canvas.classList.toggle('locked', !enabled);
   });
@@ -101,8 +116,12 @@ function initJoysticks() {
 
   setInterval(() => {
     if (!controlEnabled) return;
-    const linear = leftStick.getValue() * MAX_LINEAR;
-    const angular = rightStick.getValue() * MAX_ANGULAR;
+    const linear = clamp(leftStick.getValue() * MAX_LINEAR + keyLinear, -MAX_LINEAR, MAX_LINEAR);
+    const angular = clamp(rightStick.getValue() * MAX_ANGULAR + keyAngular, -MAX_ANGULAR, MAX_ANGULAR);
     RamblaWS.sendCmdVel(linear, angular);
   }, CMD_VEL_RATE_MS);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
