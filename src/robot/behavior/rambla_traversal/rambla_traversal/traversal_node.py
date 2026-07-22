@@ -4,7 +4,7 @@ passes through rambla_safety), and stops itself after a fixed time budget
 so a mapping-recording session has a clean, reproducible end. Tracks
 distance traveled via /odometry/filtered purely for the run-summary log,
 not as a stopping condition (time budget is simpler and sufficient given
-the apartment world's scale - see wander_behavior.py's module docstring).
+the house world's scale - see wander_behavior.py's module docstring).
 
 Also subscribes to /control_authority (published by rambla_safety's
 SafetyNode - see control_authority.py) and yields at this node's own
@@ -37,8 +37,10 @@ MANUAL_MODE = 'MANUAL'
 
 # Matches the SLAM recording plan's "~30-60s, crosses one doorway" target
 # (real-map-plan-2026-07-06.md Phase 1) - long enough to reliably reach and
-# cross at least one doorway in the current apartment world at
-# DEFAULT_FORWARD_SPEED, short enough to keep the resulting bag small.
+# cross at least one doorway in the house world at DEFAULT_FORWARD_SPEED,
+# short enough to keep the resulting bag small. Tuned against the old
+# apartment_world (now removed) - re-verify against house's larger (16x12m
+# vs 8x6m) footprint before relying on it for a fresh mapping run.
 DEFAULT_TRAVERSAL_DURATION_S = 45.0
 
 

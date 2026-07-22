@@ -119,25 +119,26 @@ Placement for the placement rationale behind this split.
 src/
 ├── robot/               # Pi-side ROS2 nodes — robot-local intelligence
 │   ├── sensors/          # Sensor driver nodes (lidar, camera, imu, tof, cliff, bumper) — not yet its own package; sensors are modeled in rambla_description for now
-│   ├── mapping/          # Topological, semantic, risk layer nodes (not started)
-│   ├── localization/     # EKF sensor fusion (`rambla_localization`) — publishes `/odometry/filtered`
+│   ├── mapping/          # Topological, semantic, risk layer nodes (not started — M7.5 landing spot)
+│   ├── localization/     # EKF sensor fusion + AMCL map-frame localization (`rambla_localization`) — publishes `/odometry/filtered` and, since M5, `map→odom` via `nav2_amcl`/`localization_monitor`/`localization_probe`
 │   ├── navigation/       # Navigation stack config + behavior execution (stack TBD — Nav2 leading candidate, M6 decision gate)
 │   └── behavior/         # Robot-local safety-reflex + AUTO/MANUAL `/cmd_vel` arbitration (`rambla_safety`), autonomous mapping-traversal (`rambla_traversal`)
-├── simulation/           # Gazebo Harmonic sim — robot description, apartment/house worlds, smoke test, observation-batch recording (NOT Pi-side)
+├── simulation/           # Gazebo Harmonic sim — robot description, house world, smoke test, observation-batch recording (NOT Pi-side)
 │   ├── rambla_sim_smoke/    # Minimal Gazebo world + ROS2 bridge smoke test
 │   ├── rambla_description/  # Robot xacro description — chassis, wheels, LiDAR, camera, IMU, bumper
-│   ├── rambla_sim/          # Apartment-scale worlds (`apartment_world`, `house`) + bringup launch/bridge
+│   ├── rambla_sim/          # House-scale world (`house`) + bringup launch/bridge
 │   └── rambla_bagging/      # Records observation batches for SLAM processing
 ├── compute/
-│   └── slam/             # Modal burst-compute container (not Pi-executed) — RTAB-Map + ROS2 deps; record→process pipeline validated end-to-end (M3), producing a real `map_v001`; localizing the Pi against it is M5; was src/robot/slam/
+│   └── slam/             # Modal burst-compute container (not Pi-executed) — RTAB-Map + ROS2 deps; record→process pipeline validated end-to-end (M3), producing a real `map_v001`; the Pi localizes against it via AMCL (M5, done); was src/robot/slam/
 ├── server/               # Hosted-service + advisory namespace — not one always-on host (see Runtime and Compute Placement); persistent state and burst compute live in that same split, not "on the server"
 │   ├── memory/           # Long-term place and environment store (not started) — future Persistent state plane
 │   ├── cognition/        # LLM reasoning, conversation, planning (not started) — future Cognition hosted service; was server/ai/
 │   ├── social/           # Human and animal profiles (not started)
 │   └── api/              # Hosted API / robot-facing relay
-│       └── rambla_control_panel/  # Web joystick teleop, live camera feed, sensor/node debug tabs — Hosted service (README M4)
+│       ├── rambla_control_panel/  # ROS2 gateway: web joystick teleop, live camera feed, sensor/node debug tabs (becomes the M4 robot-local gateway)
+│       └── rambla_relay/    # Cloudflare Worker + per-robot Durable Object — hosted relay, no ROS2 (M4, CTL-009)
 └── shared/
-    └── contracts/        # Contracts, schemas, shared docs — `robot-interface.md`, `observation-batch.md`, `map-artifact.md` (Roadmap M2)
+    └── contracts/        # Contracts, schemas, shared docs — `robot-interface.md`, `relay-protocol.md` (M4), `observation-batch.md`, `map-artifact.md` (Roadmap M2)
 
 scripts/                  # Setup and helper scripts
 docs/                     # Polished, external-facing documentation (generated periodically)
@@ -193,7 +194,7 @@ hardens them before map/nav quality depends on them.
 - [x] Adopt the enhanced apartment world — multi-room `house.world` baseline with higher-fidelity, low-compute furniture geometry and visual/semantic distinction (SIM-003) _(adopted as `house.sdf`, a second selectable world via `world:=house`; furniture fidelity pass — legs/clearance, stacked-box silhouettes, rugs — done and verified live in the VM)_
 - [x] Fix the robot bumper geometry (currently two flat chords per side meeting in a ~5cm forward-protruding wedge at the front centerline, not a smooth arc — distorts collision/clearance behavior; see `.claude/internal-docs/audits/2026-07-08-accepted-stabilization-findings.md` §3/P1-1 for the precise geometry) and revisit sensor placement/mounting on the description _(bumper: each half is now a solid circular-segment mesh following the true body radius — contact function preserved (`bumper_left`/`bumper_right` links, sensors, and topics unchanged) and verified live: real contact fires on both sides against actual wall geometry, and the safety stop script halts precisely at the configured 0.35m threshold with no contact. Sensor placement: root-caused the LiDAR's forward self-return to the camera (not the bumper, as previously documented) and fixed it by raising the LiDAR turret so the scan plane clears the camera — confirmed live, no near-range self-return in the front arc; `min_valid_range_m` dropped 0.3→0.12 accordingly. See §3/§4 of the audit doc for the full resolution.)_
 
-_Retained regression fixtures (not gating, already true — kept for focused debugging): `apartment_world.sdf` (the original 3-room layout, still the launch default) and `rambla_sim_smoke`'s `smoke_world.sdf` both remain in the repo and selectable; neither was removed when `house.sdf` was adopted._
+_Update (2026-07-15): `apartment_world.sdf` (the original 3-room, 8x6m placeholder layout) has been removed and `house` is now the sole and default world — the smaller world's mismatch with the M5-recorded `map_v001` (which was captured in `house`) had caused real confusion, including AMCL structurally failing to converge when accidentally launched against it. `rambla_sim_smoke`'s `smoke_world.sdf` is unaffected — a separate, unrelated smoke-test package._
 
 _Done when: SLAM and nav runs use the enhanced world and a corrected robot body, so map quality and collision behavior aren't fighting placeholder geometry._
 
@@ -258,25 +259,40 @@ Takes the sim-only control panel (`rambla_control_panel`, built in M0) to a
 hosted, securely-reachable deployment without exposing ROS 2 directly to
 the public internet — see audit finding #10 for the full rationale.
 
-- [ ] Deploy to a hosted platform (e.g. Vercel or equivalent) behind basic authentication
-- [ ] Add a controlled robot-facing relay/API in front of ROS 2 — no direct public ROS 2 exposure
-- [ ] Default to read-only diagnostics (camera feed, sensor/debug tabs); gate teleop behind an explicit action, protected more strongly than basic dashboard viewing
-- [ ] Handle the robot-unreachable case gracefully (offline state, no hung UI)
+- [x] Deploy to a hosted platform (e.g. Vercel or equivalent) behind basic authentication — Cloudflare Worker + per-robot Durable Object, `wrangler deploy`, basic auth on `/ws/*` and the static UI
+- [x] Add a controlled robot-facing relay/API in front of ROS 2 — no direct public ROS 2 exposure — robot-local gateway dials outbound only, no inbound port
+- [x] Default to read-only diagnostics (camera feed, sensor/debug tabs); gate teleop behind an explicit action, protected more strongly than basic dashboard viewing — control-authority lease (CTL-010)
+- [x] Handle the robot-unreachable case gracefully (offline state, no hung UI) — `robot_status` online/offline signal, gateway reconnect-with-backoff, verified live against the deployed relay (see `src/shared/contracts/relay-protocol.md`'s Online/offline signal section and `rambla_relay/README.md`'s Status)
 
 _Done when: the control panel is reachable from the public internet with basic auth, ROS 2 itself is not directly exposed, and teleop is harder to reach than read-only viewing._
 
 ### M5 — Localize against the cached map on the Pi (MAP-005)
 
-- [ ] Add a Pi-side localization node that scan-matches `/scan` against the retrieved map artifact and publishes the `map→odom` correction (closes the "no map-frame correction" gap the EKF audit noted by design)
-- [ ] Surface live position for the control panel's future map HUD (unblocks CTL-005)
+- [x] Add a Pi-side localization node that scan-matches `/scan` against the retrieved map artifact and publishes the `map→odom` correction (closes the "no map-frame correction" gap the EKF audit noted by design) _(validated live 2026-07-15: `nav2_amcl` + `nav2_map_server` bring-up (`localize.launch.py`) against a real Modal-fetched `map_v001` — no fixed/injected starting pose. A `localization_monitor` confidence state machine (`UNINITIALIZED → GLOBAL → CONVERGING → USABLE ⇄ DEGRADED → LOST`) auto-calls `/reinitialize_global_localization` on startup and on sustained `LOST`; a `localization_probe` drives a bounded in-place rotation to help disambiguation while unconverged and stationary. Arbitrary-start-pose confirmed via a full-map uniform particle spread at startup (5000 particles, only 3.5% within 1m of spawn); convergence to `USABLE` confirmed (102.1s in one `cold_start` run — not tightly bounded, see below); kidnap detection confirmed fast and reliable (`DEGRADED`/`LOST` within ~6s of a Gazebo teleport, auto-reinit fires with no operator action). Full phase-by-phase build and verification record in `M5_PLAN.md`)_
+- [x] Surface live position for the control panel's future map HUD (unblocks CTL-005) _(validated live 2026-07-15: `sensor_pose` telemetry — AMCL position/orientation, covariance, and `/localization_status` — confirmed reaching a browser control session end to end; `rambla-relay` deployed to production with the change)_
 
 _Done when: the robot reports an absolute pose in the map frame that stays bounded while driving._
 
+M5 is complete: the robot localizes globally against the cached map with no
+fixed or injected starting pose, and its composed `map → base_footprint`
+pose stays bounded because AMCL periodically re-anchors it — the EKF's own
+`/odometry/filtered` estimate is unchanged and still drifts unboundedly by
+design (AMCL adds a correction layer, it doesn't fix the EKF). **Met.**
+
+> ⚠ Two open items, not blocking this milestone: convergence time varies
+> 100–260s+ across runs rather than being tightly bounded (a tuning target,
+> not a correctness bug), and full kidnap re-convergence to `USABLE` wasn't
+> observed to complete within a 150s test budget even though
+> detection/reinit is fast and reliable — see the Hardening backlog's
+> kidnap-recovery entry and `M5_PLAN.md`'s Verification section.
+
 ### M6 — Decide the navigation stack *(decision gate — OQ-003)*
 
-- [ ] Evaluate Nav2 vs. alternatives against the record-then-process / cached-map / local-safety constraints; record the decision and rationale, resolving OQ-003
+- [x] Evaluate Nav2 vs. alternatives against the record-then-process / cached-map / local-safety constraints; record the decision and rationale, resolving OQ-003
 
-_Done when: a nav stack is chosen and written down, so M7 config work isn't speculative._
+**Decision (2026-07-15): Nav2.** M5 already deployed `nav2_amcl`, `nav2_map_server`, and `nav2_lifecycle_manager` against the cached map; the `/cmd_vel_raw` arbitration contract and `/localization_status == USABLE` gating rule already presume a Nav2-shaped global+local-costmap consumer; no ROS2 Jazzy-compatible alternative nav ecosystem exists to bake off against. Resolves OQ-003. Full decision record: `.claude/internal-docs/robot/navigation/CLAUDE.md`.
+
+_Done when: a nav stack is chosen and written down, so M7 config work isn't speculative._ **Met.**
 
 ### M7 — Autonomous navigation to a goal pose in sim (NAV-001/002/003)
 
@@ -286,6 +302,33 @@ _Done when: a nav stack is chosen and written down, so M7 config work isn't spec
 _Done when: the robot drives to a commanded goal pose and stops — or reports failure — without a collision._
 
 > ⚠ The safety reflex is a first-pass stop-only implementation (see Hardening backlog) — nav failure-recovery may need it upgraded to back-off/re-plan behavior.
+
+### M7.5 — Room-aware, coverage-directed mapping (MAP-002/003, OQ-004)
+
+Placeholder milestone, sequenced here (not renumbered into the main line)
+because it builds directly on M7's goal-directed autonomous movement and
+obstacle avoidance rather than inventing a second locomotion stack. Captures
+the "make mapping runs more Roomba-like" work so it isn't lost: today's
+`rambla_traversal` is pure reactive wander with a time budget, no room or
+coverage concept (see Hardening backlog), and `run_mapping_job` always
+passes `--delete_db_on_start`, so every run produces a fresh map from
+scratch rather than updating an existing one.
+
+- [ ] Replace `rambla_traversal`'s reactive wander with a per-room,
+  coverage-directed mapping mission: cover one room/area, judge "done" via
+  a coverage or return-to-start proxy (today's pipeline has no live SLAM
+  signal to act on mid-run), then move to the next area before submitting
+- [ ] Give the map artifact/pipeline a room-or-zone concept so the map
+  represents meaningful areas, not just an undifferentiated occupancy grid
+  (MAP-003, OQ-004 — needs its own design work for how rooms, objects,
+  uncertainty, and change are represented)
+- [ ] Support incremental/updated mapping runs — merge a new session into
+  an existing map instead of only ever producing a from-scratch `map_vNNN`
+  (MAP-002)
+
+_Done when: a mapping run autonomously sequences room-by-room coverage,
+closes each room's loop before moving on, and produces a map with room/zone
+structure that can be incrementally updated rather than only fully rebuilt._
 
 ### M8 — Reliability hardening pass
 
@@ -317,6 +360,25 @@ _Done when: internal state is published, visible in the panel, and demonstrably 
 
 _Done when: a backend is chosen and the map-versioning/job-record contract is written down._
 
+### M11.5 — Map lifecycle management (OQ-014 follow-through)
+
+Placeholder milestone, sequenced here (not renumbered into the main line)
+because implementing lifecycle operations needs the M11 backend decision
+made first. Captures the "clean up old maps, update maps" half of the
+mapping-improvement ask so it isn't lost.
+
+- [ ] Implement listing, pruning/cleanup of superseded map artifacts, and
+  versioned rollback on top of the M11-chosen persistent-state backend
+- [ ] Support "update this map" as a first-class operation — merge an M7.5
+  mapping run into an existing map — rather than only creating new
+  top-level versions
+- [ ] Surface map management (list/rescan/delete) in the control panel,
+  closing out CTL-006's "initiate a new full map scan" affordance
+
+_Done when: old/superseded map artifacts can be listed, pruned, and rolled
+back through a defined interface instead of accumulating unmanaged in the
+persistent-state backend._
+
 ### M12 — Hardware selection & BOM (OQ-001/OQ-002, PHY-004)
 
 - [ ] Select sensors/compute against the sim-proven stack; draft the BOM; identify which oomwoo components are reusable
@@ -337,13 +399,14 @@ they aren't mistaken for finished. Each is pulled into a milestone (or its
 own focused pass) when it starts to hurt; the trigger is noted.
 
 - **Safety reflex** (`rambla_safety`) — first-pass stop-only: halts on bumper/LiDAR but has no back-off, re-plan, or recovery. _Revisit when M7 nav failure-recovery needs more than a hard stop._
-- **Mapping-run wander** (`rambla_traversal`) — crude reactive coverage, well below Roomba-grade systematic exploration; leaves gaps a good first map wants filled. _Revisit for M3 map completeness / coverage quality._
+- **Mapping-run wander** (`rambla_traversal`) — crude reactive coverage, well below Roomba-grade systematic exploration; leaves gaps a good first map wants filled. _Promoted to **M7.5** (room-aware, coverage-directed mapping) — no longer an undated backlog item._
 - **EKF noise model** (`ekf.yaml`, `frame_id_fixer.py`) — hand-picked placeholder covariance, not a real sensor-noise model (PHY-004). _Revisit when real hardware sensor characteristics are known (M12/M13)._
 - **Data contract & tests** — topic/frame contract is prose-only and automated coverage is thin. _Partially addressed in M2 (early interface-contract smoke test); expanded in M8 as more topics stack up._
 - **EKF covariance unit test** (`covariance_injector.py`'s covariance-injection logic) — guards the single worst historical bug (18m EKF divergence); the integration smoke test only partially covers it today. _Revisit alongside M8's contract-test work._
 - **README Structure diagram** — visually distinguish placeholder vs. implemented `server/`/`robot/` subdirectories so an at-a-glance read doesn't imply parity. _Low-urgency cosmetic fix._
 - **`.gitignore` stale build-artifact path** — two-line correction, no urgency, no artifacts have leaked.
 - **`rambla_traversal` / `rambla_control_panel` subsystem `CLAUDE.md` docs** — simpler invariants than `rambla_safety`'s, already stated in existing docstrings. _Write when either subsystem's contract needs to be discoverable outside its source._
+- **Kidnap-recovery verification + fallback behavior** (`rambla_localization`) — M5 kidnap-recovery testing is currently blocked on a single-room map: the active map artifact was found to cover only ~42% of its own bounding box as known/free space, so a same-room teleport is the most realistic test available today, and detection/reinit is confirmed fast and reliable but full re-convergence wasn't observed to complete within test budgets up to 150s (see `M5_PLAN.md`'s Verification section). There's also no designed fallback for sustained non-recovery beyond "keep reinitializing" — e.g. map the current area, explore until it finds somewhere well-known enough to localize, or some other more intentional behavior. _Revisit after **M7.5** (room-aware, coverage-directed mapping) produces a solid, multi-room map worth testing a real cross-room kidnap against._
 
 ## License
 

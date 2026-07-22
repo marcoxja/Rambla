@@ -1,0 +1,16 @@
+{
+  "name": "rambla-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker + per-robot Durable Object hosted relay (M4, CTL-009). Terminates browser auth, holds the control-authority lease, and fans out control/telemetry/video between the robot-local gateway and browsers. No ROS 2 code here — see src/shared/contracts/relay-protocol.md for the wire contract this implements.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}

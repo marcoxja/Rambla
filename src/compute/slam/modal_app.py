@@ -1,10 +1,12 @@
 import json
 import os
+import queue
 import re
 import shutil
 import signal
 import sqlite3
 import subprocess
+import threading
 import time
 
 import modal
@@ -197,6 +199,152 @@ def _link_type_counts(db_path: str) -> dict:
     return {_LINK_TYPE_NAMES.get(t, f"type_{t}"): c for t, c in rows}
 
 
+class _MapWatcher:
+    def __init__(
+        self,
+        proc: subprocess.Popen,
+        lines: "queue.Queue[str]",
+        all_output: list[str],
+    ) -> None:
+        self.proc = proc
+        self.lines = lines
+        self.all_output = all_output
+
+
+# rtabmap_util's MapsManager::publishMaps() only calls gridMapPub_->publish()
+# when gridMapPub_->get_subscription_count() is nonzero at the moment a grid
+# update happens (confirmed via source review, 2026-07-14) - the grid is
+# *computed* every processing iteration regardless, but never handed to DDS
+# without a subscriber already connected. Since rtabmap only calls
+# process()/publishMaps() while sensor data is actively arriving (i.e. during
+# bag playback), the watcher MUST be connected *before* playback starts - one
+# arriving only after playback ends (the original design) can never work: by
+# then nothing will ever be published again for it to receive, no matter how
+# long it waits, and TRANSIENT_LOCAL only latches samples that were actually
+# published.
+#
+# Message type given explicitly (nav_msgs/msg/OccupancyGrid, confirmed via a
+# live `ros2 topic info -v` capture): without it, `ros2 topic echo` polls the
+# ROS graph to learn the topic's type before it will even create a
+# subscription - live-confirmed (2026-07-14) stuck at 0 registered
+# subscriptions for a full 120s timeout with the type omitted.
+# PYTHONUNBUFFERED so its own stdout (itself a Python process) isn't fully
+# block-buffered once stdout is a pipe rather than a tty.
+def _start_map_watcher() -> _MapWatcher:
+    proc = subprocess.Popen(
+        ["bash", "-c",
+         "source /opt/ros/jazzy/setup.bash && "
+         "PYTHONUNBUFFERED=1 ros2 topic echo --field header.stamp "
+         "/rtabmap/map nav_msgs/msg/OccupancyGrid"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+    )
+    lines: "queue.Queue[str]" = queue.Queue()
+    all_output: list[str] = []
+
+    def _reader() -> None:
+        for line in proc.stdout:
+            all_output.append(line)
+            lines.put(line)
+
+    threading.Thread(target=_reader, daemon=True).start()
+    return _MapWatcher(proc, lines, all_output)
+
+
+# Watches the stream from a watcher already connected (via _start_map_watcher,
+# started before bag playback) until its header stamp stops changing for
+# stability_window_s, bounded by an overall timeout_s so a stuck/never-
+# publishing topic fails the job instead of hanging it. Stability is checked
+# on every loop tick, including idle ticks with no new message - after bag
+# playback ends rtabmap stops publishing entirely, so "quiet for
+# stability_window_s" must still be detected while the queue is empty, not
+# only in between messages.
+def _wait_for_map_stable(
+    watcher: _MapWatcher,
+    stability_window_s: float = 10.0,
+    timeout_s: float = 120.0,
+) -> float:
+    start = time.monotonic()
+    stamp_lines: list[str] = []
+    last_stamp = None
+    last_change = start
+    try:
+        while True:
+            now = time.monotonic()
+            elapsed = now - start
+            remaining = timeout_s - elapsed
+            if remaining <= 0:
+                exit_code = watcher.proc.poll()
+                tail = "".join(watcher.all_output[-20:])
+                raise RuntimeError(
+                    f"/rtabmap/map did not stabilize within {timeout_s}s "
+                    f"(last_stamp={last_stamp!r}, echo_exit_code={exit_code!r}, "
+                    f"echo_output_tail={tail!r})"
+                )
+            if last_stamp is not None and now - last_change >= stability_window_s:
+                return now - start
+            try:
+                line = watcher.lines.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line.strip() == "---":
+                stamp = "".join(stamp_lines).strip()
+                stamp_lines = []
+                if stamp and stamp != last_stamp:
+                    last_stamp = stamp
+                    last_change = time.monotonic()
+            else:
+                stamp_lines.append(line)
+    finally:
+        watcher.proc.terminate()
+        try:
+            watcher.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            watcher.proc.kill()
+
+
+# map_saver_cli's output format is a flat key: value YAML (image/resolution/
+# origin/negate/occupied_thresh/free_thresh, no nesting) - hand-parsed here
+# rather than pulling in pyyaml as a new dependency on run_mapping_job's
+# image (only the separate diagnostic_image installs it today).
+def _verify_map_yaml(yaml_path: str) -> dict:
+    if not os.path.exists(yaml_path):
+        raise RuntimeError(f"map_saver_cli did not produce {yaml_path}")
+    fields = {}
+    with open(yaml_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[key.strip()] = value.strip()
+    resolution = fields.get("resolution")
+    origin = fields.get("origin")
+    image_name = fields.get("image")
+    if not resolution or not origin:
+        raise RuntimeError(
+            f"{yaml_path} missing resolution/origin: parsed fields={fields}"
+        )
+    if not image_name:
+        raise RuntimeError(f"{yaml_path} missing image field: parsed fields={fields}")
+    image_path = os.path.join(os.path.dirname(yaml_path), image_name)
+    if not os.path.exists(image_path):
+        raise RuntimeError(
+            f"map image {image_path} referenced by {yaml_path} not found"
+        )
+    image_size_bytes = os.path.getsize(image_path)
+    if image_size_bytes < 1024:
+        raise RuntimeError(
+            f"map image {image_path} is implausibly small ({image_size_bytes} bytes)"
+        )
+    return {
+        "yaml_path": yaml_path,
+        "image_path": image_path,
+        "image_size_bytes": image_size_bytes,
+        "resolution": resolution,
+        "origin": origin,
+    }
+
+
 @app.function(volumes={"/data": data_volume}, timeout=900)
 def run_mapping_job(batch_name: str) -> dict:
     bag_path = f"/data/observation_batches/{batch_name}"
@@ -232,6 +380,14 @@ def run_mapping_job(batch_name: str) -> dict:
     # a cold container's first `ros2 launch` is slower than a warm one.
     time.sleep(8)
 
+    # Must be connected *before* bag play starts, not after it ends - see
+    # _start_map_watcher's comment for why a subscriber arriving after
+    # playback ends can never receive a publish. The extra settle sleep
+    # gives DDS discovery time to connect it to rtabmap's publisher before
+    # bag play begins driving the grid updates that depend on it.
+    map_watcher = _start_map_watcher()
+    time.sleep(3)
+
     play_start = time.monotonic()
     play_result = subprocess.run(
         ["bash", "-c",
@@ -242,11 +398,58 @@ def run_mapping_job(batch_name: str) -> dict:
     )
     play_duration_s = time.monotonic() - play_start
 
-    # rtabmap may still be draining its subscriber queue / running a final
-    # optimization pass after playback ends - not an arbitrary guess, the
-    # RTAB-Map maintainer's documented orchestration for this exact
-    # live-node-in-a-script pattern.
-    time.sleep(10)
+    # /rtabmap/map lags behind playback and may be mid-update right when it
+    # ends - wait for it to stabilize, then save it via map_saver_cli *before*
+    # touching rtabmap (still alive, still publishing /rtabmap/map at this
+    # point). This also subsumes the old fixed drain sleep: by the time
+    # /rtabmap/map has gone quiet for stability_window_s, rtabmap has
+    # necessarily finished processing the tail of the bag.
+    map_saver_report = {"stability_wait_s": None, "verified": False}
+    try:
+        map_saver_report["stability_wait_s"] = _wait_for_map_stable(map_watcher)
+
+        map_yaml_path = os.path.join(output_dir, "map.yaml")
+        map_saver_result = subprocess.run(
+            ["bash", "-c",
+             "source /opt/ros/jazzy/setup.bash && "
+             "ros2 run nav2_map_server map_saver_cli "
+             f"-f {os.path.join(output_dir, 'map')} "
+             "--ros-args -p save_map_timeout:=10.0 -r map:=/rtabmap/map"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if map_saver_result.returncode != 0:
+            raise RuntimeError(
+                f"map_saver_cli failed (exit {map_saver_result.returncode}):\n"
+                f"{map_saver_result.stdout}\n{map_saver_result.stderr}"
+            )
+        map_saver_report.update(verified=True, **_verify_map_yaml(map_yaml_path))
+    except Exception as exc:
+        map_saver_report["error"] = str(exc)
+        # Diagnostic-only, added to root-cause the first real _wait_for_map_stable
+        # failure (2026-07-14): rtabmap was still alive at this point (SIGINT
+        # below hasn't run yet), so capture live topic/QoS state before it's
+        # torn down - not available after the fact.
+        diagnostics = {}
+        for key, cmd in (
+            ("topic_list", "ros2 topic list -t"),
+            ("map_topic_info", "ros2 topic info -v /rtabmap/map"),
+        ):
+            try:
+                result = subprocess.run(
+                    ["bash", "-c", f"source /opt/ros/jazzy/setup.bash && {cmd}"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                diagnostics[key] = result.stdout + result.stderr
+            except Exception as diag_exc:
+                diagnostics[f"{key}_error"] = str(diag_exc)
+        map_saver_report["diagnostics"] = diagnostics
+        with open(os.path.join(output_dir, "processing_report.json"), "w") as f:
+            json.dump(
+                {"batch_name": batch_name, "map_saver": map_saver_report},
+                f, indent=2,
+            )
+        data_volume.commit()
+        raise
 
     os.killpg(os.getpgid(rtabmap_proc.pid), signal.SIGINT)
     try:
@@ -307,6 +510,7 @@ def run_mapping_job(batch_name: str) -> dict:
 
     report = {
         "batch_name": batch_name,
+        "map_saver": map_saver_report,
         "bag_play": {
             "exit_code": play_result.returncode,
             "duration_s": play_duration_s,

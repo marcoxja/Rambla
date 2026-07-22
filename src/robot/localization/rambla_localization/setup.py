@@ -10,8 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/ekf.launch.py']),
-        ('share/' + package_name + '/config', ['config/ekf.yaml']),
+        ('share/' + package_name + '/launch',
+            ['launch/ekf.launch.py', 'launch/localize.launch.py']),
+        ('share/' + package_name + '/config',
+            ['config/ekf.yaml', 'config/amcl.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +24,9 @@ setup(
     entry_points={
         'console_scripts': [
             'covariance_injector = rambla_localization.covariance_injector:main',
+            'localization_monitor = rambla_localization.localization_monitor:main',
+            'localization_probe = rambla_localization.localization_probe:main',
+            'verify_localization = rambla_localization.verify_localization:main',
         ],
     },
 )

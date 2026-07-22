@@ -28,6 +28,21 @@ ALLOWLIST=(
   "shared"
 )
 
+# Individual files under an allowlisted path that should still never be
+# copied (private-only, kept out deliberately by user decision).
+EXCLUDE_FILES=(
+  "src/server/api/rambla_relay/.dev.vars.example"
+)
+
+is_excluded_file() {
+  local candidate="$1"
+  local excluded
+  for excluded in "${EXCLUDE_FILES[@]}"; do
+    [ "$candidate" = "$excluded" ] && return 0
+  done
+  return 1
+}
+
 DO_PUSH=false
 for arg in "$@"; do
   case "$arg" in
@@ -83,6 +98,10 @@ for entry in "${ALLOWLIST[@]}"; do
 
   count=0
   for rel_path in "${tracked_files[@]}"; do
+    if is_excluded_file "$rel_path"; then
+      echo "  (exclude) $rel_path"
+      continue
+    fi
     dst_file="$SCRATCH_DIR/public/$rel_path"
     mkdir -p "$(dirname "$dst_file")"
     rsync -a "$PRIVATE_REPO_ROOT/$rel_path" "$dst_file"

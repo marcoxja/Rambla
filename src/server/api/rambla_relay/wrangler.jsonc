@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // M4 (CTL-009) hosted relay: terminates browser auth, holds the
+  // control-authority lease, fans control/telemetry/video between the
+  // robot-local gateway and browsers. See ../../../shared/contracts/
+  // relay-protocol.md for the wire contract and rambla_control_panel/ for
+  // the gateway this talks to.
+  "name": "rambla-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // One Durable Object class, one instance per robot (idFromName(robot_id)
+  // per relay-protocol.md). Phase 0: class exists and is bound, but holds
+  // no real protocol logic yet.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROBOT_RELAY",
+        "class_name": "RobotRelay"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RobotRelay"]
+    }
+  ],
+
+  // Phase 2: static UI is reused in place from rambla_control_panel's ROS
+  // package (M4_PLAN.md "repository/deployment boundary" — no duplicate
+  // copy) rather than vendored into this project. `run_worker_first` keeps
+  // every request routed through index.ts's fetch handler first so basic
+  // auth is checked before any asset bytes are served; index.ts then calls
+  // env.ASSETS.fetch(request) itself once auth passes.
+  "assets": {
+    "directory": "../rambla_control_panel/rambla_control_panel/static",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+
+  // Secrets (not committed): ROBOT_TOKEN (robot bearer auth, layer 1),
+  // BASIC_AUTH_USER / BASIC_AUTH_PASS (browser basic auth, layer 2).
+  // Set via `wrangler secret put <NAME>` before deploying (Phase 2).
+}

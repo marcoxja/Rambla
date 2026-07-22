@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rambla_navigation</name>
+  <version>0.0.1</version>
+  <description>Nav2 goal navigation against the M5 localization stack: Nav2 bring-up (planner/controller/costmaps/behaviors) plus behavior_supervisor, the sole /cmd_vel_raw writer arbitrating NAV/PROBE/MAP autonomous intent.</description>
+  <maintainer email="jackdemarco.jd@gmail.com">Jack Demarco</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <!-- supervisor_state.py imports the AUTO/MANUAL and GLOBAL/CONVERGING/
+       USABLE status constants directly from these packages' pure state
+       modules rather than duplicating the string values (M7 Phase 2). -->
+  <exec_depend>rambla_localization</exec_depend>
+  <exec_depend>rambla_safety</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
