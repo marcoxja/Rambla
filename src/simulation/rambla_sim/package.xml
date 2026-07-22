@@ -3,13 +3,14 @@
 <package format="3">
   <name>rambla_sim</name>
   <version>0.0.1</version>
-  <description>Apartment-scale Gazebo world spawning the Rambla robot description with full sensor/control bridging.</description>
+  <description>House-scale Gazebo world spawning the Rambla robot description with full sensor/control bridging.</description>
   <maintainer email="jackdemarco.jd@gmail.com">Jack Demarco</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rambla_description</exec_depend>
   <exec_depend>rambla_localization</exec_depend>
   <exec_depend>rambla_safety</exec_depend>
+  <exec_depend>rambla_navigation</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>

@@ -35,6 +35,9 @@ future real-hardware bridge.
 | `/control_authority` | `std_msgs/msg/String` (`"AUTO"`/`"MANUAL"`) | robot → consumers | — | 20 Hz |
 | `/bumper_left/contact` | `ros_gz_interfaces/msg/Contacts` | robot → consumers | — | 50 Hz |
 | `/bumper_right/contact` | `ros_gz_interfaces/msg/Contacts` | robot → consumers | — | 50 Hz |
+| `/amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | robot → consumers | `map` | event-driven |
+| `/particle_cloud` | `nav2_msgs/msg/ParticleCloud` | robot → consumers | `map` | event-driven |
+| `/localization_status` | `std_msgs/msg/String` (`"UNINITIALIZED"`/`"GLOBAL"`/`"CONVERGING"`/`"USABLE"`/`"DEGRADED"`/`"LOST"`) | robot → consumers | — | 5 Hz |
 
 Notes:
 
@@ -85,9 +88,16 @@ edge of the tree:
   `publish_tf: true`.
 - **`base_footprint → base_link → {sensor/wheel links}`** — owned by
   `robot_state_publisher`, driven by the URDF's fixed-joint chain.
-- **`map`** — reserved, unused. No map-frame source exists yet (no
-  AMCL/SLAM pose correction integrated); position covariance on
-  `/odometry/filtered` grows unboundedly over time by design until one does.
+- **`map → odom`** — owned **solely by `amcl`** (`localize.launch.py`,
+  opt-in, `rambla_localization/config/amcl.yaml`), when included. AMCL does
+  **not** fix `/odometry/filtered`'s own drift — `ekf_filter_node` remains a
+  pure odom-frame estimator (`world_frame: odom`, unchanged) and its own
+  position covariance keeps growing unboundedly by design. What AMCL adds is
+  periodic re-anchoring of `map → odom`; composing it with `odom →
+  base_footprint` yields a `map → base_footprint` pose that stays bounded
+  even though the EKF's own local estimate keeps drifting underneath. When
+  `localize.launch.py` is not included (the default), `map` stays reserved
+  and unpublished, same as before.
 
 ---
 
@@ -132,6 +142,76 @@ regression traps live in
 > for a future robot status/health topic (battery, fault state, etc. — see
 > `.claude/internal-docs/architecture/CLAUDE.md`'s planned-topic list). No
 > message shape is frozen here; do not build against an assumed schema.
+
+---
+
+## Localization confidence state (M5 Phase 4 — implemented)
+
+- **`/localization_status`** (`std_msgs/msg/String`, one of
+  `"UNINITIALIZED"`/`"GLOBAL"`/`"CONVERGING"`/`"USABLE"`/`"DEGRADED"`/
+  `"LOST"`) — published by `rambla_localization/localization_monitor.py`
+  at 5 Hz. Same enum-string pattern as `/control_authority`: consumers
+  read the literal string, no custom message type. Derived from
+  `/particle_cloud` spread and `/amcl_pose` covariance — see that node's
+  module docstring and `localization_state.LocalizationMonitor` for the
+  full state machine and thresholds.
+- `localization_monitor` also calls `nav2_amcl`'s
+  `/reinitialize_global_localization` (`std_srvs/srv/Empty`) service —
+  once on startup (detected via the service becoming available, i.e. amcl
+  is up under `localize.launch.py`'s lifecycle manager) and again
+  whenever `LOST` persists past a bounded duration, past a cooldown since
+  the last request. This is the concrete kidnapped-robot recovery
+  mechanism; AMCL's own `recovery_alpha_slow`/`recovery_alpha_fast`
+  (`amcl.yaml`) is a passive mitigation only, not a guaranteed detector.
+- The forward contract for gating future map-relative autonomous motion
+  (M7's nav stack) on this topic is below.
+
+---
+
+## Forward interface contract: map-relative autonomy gating (M5 Phase 6)
+
+**Binding on future consumers only — nothing in this repo changes to
+satisfy it today.** `rambla_traversal`'s existing wander behavior is purely
+reactive/local (bumper + LiDAR front-arc), never reads `/localization_status`
+or any map-frame pose, and is unaffected. This section exists so M7's nav
+stack (not built yet) is designed against the right gate from the start,
+rather than retrofitted.
+
+- **Gating rule**: any goal-directed, map-relative autonomous motion (path
+  planning to a map-frame waypoint, return-to-dock, frontier exploration,
+  or any future consumer that commands `/cmd_vel_raw` based on a `map`-frame
+  goal) **must** confirm `/localization_status == "USABLE"` before issuing
+  the first command for that goal, and must stop issuing map-relative
+  commands if status drops out of `USABLE` (`DEGRADED`/`LOST`) mid-goal —
+  falling back to holding position rather than continuing to trust a
+  pose that's no longer bounded. Purely reactive/local behavior (like
+  today's `rambla_traversal` wander, or `localization_probe`'s own
+  in-place rotation) is not "map-relative" and is not subject to this
+  gate.
+- **Not gated by this contract**: `localization_probe` (M5 Phase 5) itself
+  runs precisely while status is `GLOBAL`/`CONVERGING`, i.e. *before*
+  `USABLE` — it is the mechanism that helps reach `USABLE`, not a consumer
+  of it, and stays exempt by construction.
+- **Non-blocking map-refresh constraint** (binding on M7's nav stack and
+  M11.5's incremental map-merge lifecycle): a pending or unavailable map
+  *update* must never block `/cmd_vel_raw` commands already gated on
+  `USABLE` — navigation continues against whichever map artifact is
+  currently active (per the local map-cache/activation contract in
+  `map-artifact.md` and `scripts/vm.sh`), even if a newer artifact is
+  mid-download, failed validation, or unreachable. Activation is already a
+  deliberate, atomic, offline symlink swap (never a live in-place fetch a
+  running nav stack could stall on), so there is no "fetch in progress"
+  state for a nav consumer to ever observe.
+- **The only condition that withholds motion** under this contract is
+  having no map ever activated at all — i.e. `/localization_status` never
+  having left `UNINITIALIZED`/`LOST` for lack of any map to localize
+  against. That is a distinct failure mode from "a fresher map isn't
+  available yet," which is explicitly not blocking (previous bullet).
+- This is consistent with `docs/architecture.md`'s Degraded Mode
+  principle — burst-compute/network unavailability must never translate
+  into losing control of the robot — and with `map-artifact.md`'s existing
+  deferral of persistent-state backend, job lifecycle, and artifact-
+  discovery concerns to M11/M11.5, which this contract does not reopen.
 
 ---
 

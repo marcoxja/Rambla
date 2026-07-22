@@ -17,11 +17,11 @@ safety_node:
     min_valid_range_m: 0.12
     # Forward motion blocked when the front-arc LiDAR minimum (after
     # excluding self-detection below min_valid_range_m) drops below this.
-    # 0.35m sits comfortably inside the apartment world's narrowest
-    # doorway gap (0.9m) and outside the robot's base diameter (0.349m,
-    # see rambla_description/urdf/params.xacro), so it stops short of
+    # 0.35m sits comfortably inside the house world's narrowest doorway
+    # gap and outside the robot's base diameter (0.349m, see
+    # rambla_description/urdf/params.xacro), so it stops short of
     # furniture/walls without being so cautious the robot can't pass
-    # through a doorway. See apartment_world.sdf for room/doorway geometry.
+    # through a doorway. See house.sdf for room/doorway geometry.
     stop_distance_m: 0.35
     # +/- this many degrees either side of straight ahead (angle 0) counts
     # as "front" for the stop-distance check.

@@ -37,12 +37,14 @@ occupancy grid from the LiDAR.
 |---|---|---|
 | Graph database | `rtabmap.db` | RTAB-Map's own sparse graph/database (visual features + poses), not a dense point cloud. |
 | Occupancy grid | `map_map.pgm` | 2D occupancy grid, for localization/navigation. Produced by `rtabmap-reprocess -g2`, which is **PGM-only** — no YAML sidecar with resolution/origin. |
-| Processing report | `processing_report.json` | What ran: timings, exit codes, node/loop-closure counts parsed from RTAB-Map's own log output. |
+| Occupancy grid (Nav2-compatible) | `map.yaml` + `map.pgm` | Same occupancy grid, saved with its resolution/origin YAML sidecar via `nav2_map_server`'s `map_saver_cli` against the live `/map` topic while rtabmap is still running (after a bounded readiness/stability wait — `/map` lags behind bag playback). Consumed by the Pi-side localization stack (M5); see `robot-interface.md`. |
+| Processing report | `processing_report.json` | What ran: timings, exit codes, node/loop-closure counts parsed from RTAB-Map's own log output; also records the `map_saver` step (`stability_wait_s`, `verified`, `yaml_path`, `image_path`, `image_size_bytes`). |
 
-**Known gap:** `rtabmap-reprocess -g2`'s PGM-only export means there is no
-Nav2-style `nav2_map_server`-compatible sidecar (resolution/origin YAML)
-today. Producing one is a distinct, out-of-scope future step if a Nav2-style
-consumer needs it later — not assumed by this contract.
+**Resolved gap (M5):** `rtabmap-reprocess -g2`'s PGM-only export still has no
+YAML sidecar, but the job now separately produces one via `map_saver_cli`
+against the live `/map` topic (see table above) before rtabmap is torn down.
+The job fails loudly, before touching rtabmap's own shutdown/reprocess path,
+if `/map` never stabilizes or the saved `map.yaml`/image don't verify.
 
 ---
 

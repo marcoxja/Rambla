@@ -1,0 +1,105 @@
+amcl:
+  ros__parameters:
+    use_sim_time: true
+
+    # Frame naming matches ekf.yaml's odom_frame/base_link_frame. global_frame_id
+    # is the map->odom edge AMCL becomes the sole publisher of - see
+    # robot-interface.md's TF ownership section.
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    global_frame_id: map
+    scan_topic: /scan
+
+    # No initial pose is ever provided - global localization only (M5's
+    # kidnapped-robot framing: startup/relocation must never depend on a
+    # known/injected starting pose). Do not add set_initial_pose: true,
+    # initial_pose_x/y/a, or wire a launch arg/operator prompt for one here.
+    # localization_monitor (Phase 4) calls /reinitialize_global_localization
+    # on startup and on sustained LOST instead.
+    set_initial_pose: false
+    always_reset_initial_pose: true
+    first_map_only: false
+
+    # Sized for a full-map uniform spread on startup (no seeded pose to
+    # narrow from) - larger than nav2's stock turtlebot3 defaults (100/2000),
+    # which assume a known start pose. max_particles raised 5000->10000 for
+    # M7 Phase 2.5 Task 3 (cause 3): map_v002's free area is ~3.8x the old
+    # map's, so the old 5000-particle budget was noticeably thinner per m^2,
+    # split across competing room-clusters in a symmetric layout. min_particles
+    # left alone - it's the floor once well-converged, not the startup budget.
+    min_particles: 500
+    max_particles: 10000
+
+    # AMCL's KLD-sampling adapts the live particle count between
+    # min/max_particles based on how many bins have support - a *looser*
+    # pf_err (this file previously had 0.05, 5x looser than nav2_amcl's own
+    # documented default of 0.01) satisfies the KLD bound with fewer
+    # particles, so the uniform GLOBAL phase was settling for well under
+    # max_particles even before it had a chance to disambiguate. Tightened
+    # back to the standard default so the newly-raised max_particles above
+    # actually gets used during the ambiguous phase, not just made available.
+    # pf_z (confidence) was already at the standard 0.99, unchanged.
+    pf_err: 0.01
+
+    # Re-enabled (M7 Phase 2.5 Task 5, 2026-07-20), isolated from Task 3's
+    # other two changes (max_particles/pf_err stay as Task 3 left them --
+    # this is the ONLY delta in this edit). Task 3 disabled these, bundled
+    # with two unrelated changes, reasoning augmented-MCL's random-particle
+    # injection competed with convergence for particle budget. Restored to
+    # the values M5 Phase 3 originally chose (Fox et al. / Probabilistic
+    # Robotics; also nav2_amcl's convention for "on"). A dedicated isolated
+    # live test (300s, 10 cycles) found NO measurable change in the
+    # GLOBAL->CONVERGING rate (0/10, same as a fresh 0/21 baseline with it
+    # off) -- but that null result doesn't indict the parameter: it only
+    # fires on DECLINING average particle match weight relative to a recent
+    # trend (a signal LocalizationMonitor never watches), meaningful for a
+    # filter that was well-matched and is now silently slipping (sensor
+    # occlusion, drift, a kidnapped robot) -- not for accelerating the
+    # initial GLOBAL disambiguation the test measured. Neither test sample
+    # ever reached CONVERGING, so it was never actually in a position to
+    # act. Kept ON: it's the one built-in mechanism aimed at exactly the
+    # "confidently wrong" class Task 4's likelihood-scoring diagnostic
+    # found (ground truth scores 3.5-5.8x higher than AMCL's own wrong
+    # convergence — a sampling/resampling problem, not content aliasing),
+    # at no confirmed cost. See M7_LOCALIZATION_FINDINGS.md sections 7-8.
+    recovery_alpha_slow: 0.001
+    recovery_alpha_fast: 0.1
+
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+
+    laser_model_type: likelihood_field
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 100.0
+    laser_min_range: -1.0
+    max_beams: 60
+
+    update_min_d: 0.2
+    update_min_a: 0.2
+    resample_interval: 1
+    transform_tolerance: 1.0
+    tf_broadcast: true
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+
+    # z_hit/sigma_hit sharpened (M7 Phase 2.5 Task 5, 2026-07-20; isolated
+    # from recovery_alpha above -- the only delta in this edit): the
+    # documented ROS Navigation Tuning Guide precedent for a comparable
+    # confidently-wrong-convergence issue (z_hit 0.5->0.9, sigma_hit
+    # 0.2->0.1). Only `laser_model_type: likelihood_field`'s two actual
+    # scoring terms change; z_short/z_max/lambda_short belong to the
+    # unused beam/likelihood_field_prob models and are left alone (see
+    # scripts/likelihood_score.py's docstring for why they don't apply
+    # here). z_rand left unchanged too, kept as a single, attributable
+    # dimension rather than rebalancing multiple weights at once.
+    pf_z: 0.99
+    z_hit: 0.9
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    sigma_hit: 0.1
+    lambda_short: 0.1
+
+    save_pose_rate: 0.5

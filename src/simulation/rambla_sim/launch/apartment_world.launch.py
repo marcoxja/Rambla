@@ -23,8 +23,6 @@ from launch_ros.parameter_descriptions import ParameterValue
 # which is also the .sdf filename stem and the <world name> inside that file
 # (see the invariant note in launch_setup below).
 WORLD_SPAWN_DEFAULTS = {
-    # Living room, near the original 3-room layout's entrance.
-    'apartment_world': (2.0, 2.0, 0.05),
     # Living room open floor, clear of the sofa/coffee-table/TV-stand
     # (upstream house.sdf itself documents this as the robot spawn area:
     # x=-6 to -2, y=1.5 to 4.5).
@@ -37,6 +35,7 @@ def launch_setup(context, *args, **kwargs):
     description_pkg_share = get_package_share_directory('rambla_description')
     localization_pkg_share = get_package_share_directory('rambla_localization')
     safety_pkg_share = get_package_share_directory('rambla_safety')
+    navigation_pkg_share = get_package_share_directory('rambla_navigation')
 
     # Invariant relied on below and by the bridge's bumper contact topic
     # paths: the `world` launch-arg value, the worlds/<world>.sdf filename
@@ -48,7 +47,7 @@ def launch_setup(context, *args, **kwargs):
     robot_description = xacro.process_file(xacro_path).toxml()
 
     default_x, default_y, default_z = WORLD_SPAWN_DEFAULTS.get(
-        world_name, (2.0, 2.0, 0.05)
+        world_name, (-4.0, 3.0, 0.05)
     )
     spawn_x = LaunchConfiguration('spawn_x').perform(context) or str(default_x)
     spawn_y = LaunchConfiguration('spawn_y').perform(context) or str(default_y)
@@ -60,6 +59,29 @@ def launch_setup(context, *args, **kwargs):
     # startx - see simulation/CLAUDE.md) to watch the sim visually.
     gui = LaunchConfiguration('gui').perform(context)
     server_flag = '' if gui == 'true' else '-s '
+
+    # Opt-in: the map artifact is deploy-time state (M5 Phase 2's local
+    # cache) that won't always be present, so localize.launch.py is never
+    # included by default.
+    localize_enabled = LaunchConfiguration('localize').perform(context) == 'true'
+
+    # Opt-in: Nav2 goal navigation (M7). Requires localize:=true - Nav2 and
+    # behavior_supervisor are pure map-frame consumers with nothing to
+    # localize against otherwise. Fails loudly below rather than silently
+    # starting a nav stack that can never leave the pre-USABLE PROBE state.
+    navigate_enabled = LaunchConfiguration('navigate').perform(context) == 'true'
+    if navigate_enabled and not localize_enabled:
+        return [
+            LogInfo(
+                msg=(
+                    "navigate:=true requires localize:=true (Nav2/"
+                    'behavior_supervisor need the M5 localization stack '
+                    'to gate goal dispatch on /localization_status == '
+                    'USABLE); aborting bringup.'
+                )
+            ),
+            Shutdown(reason='navigate requested without localize'),
+        ]
 
     # gz-sim's model:// URI resolver (SystemPaths) only searches
     # GZ_SIM_RESOURCE_PATH, which out of the box covers /opt/ros/jazzy/share
@@ -227,6 +249,32 @@ def launch_setup(context, *args, **kwargs):
         )
     )
 
+    # Global localization against the M5 Phase 2 local map cache
+    # (map_server + amcl + lifecycle_manager) - opt-in via the `localize`
+    # launch arg, gated below, since a map artifact won't always be present.
+    # When Nav2 is also up (navigate:=true), localization_probe's output is
+    # remapped from its default /cmd_vel_raw to /cmd_vel_probe so
+    # behavior_supervisor (M7's sole /cmd_vel_raw writer) can mux it
+    # in - see localize.launch.py's probe_cmd_topic arg.
+    localize = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(localization_pkg_share, 'launch', 'localize.launch.py')
+        ),
+        launch_arguments=(
+            {'probe_cmd_topic': '/cmd_vel_probe'} if navigate_enabled else {}
+        ).items(),
+    )
+
+    # Nav2 goal navigation (M7 Phase 1) - opt-in via `navigate`, requires
+    # localize:=true (checked above). Brings up Nav2's planner/controller/
+    # behavior/BT nodes plus behavior_supervisor; assumes localize is
+    # already included in this same bringup.
+    navigate = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(navigation_pkg_share, 'launch', 'navigate.launch.py')
+        )
+    )
+
     # gz_sim needs to be up before anything else attaches to or bridges from
     # it. Rather than a fixed TimerAction guess, bringup is gated on two
     # real readiness signals in sequence:
@@ -263,7 +311,12 @@ def launch_setup(context, *args, **kwargs):
     # signal for negligible benefit.
     def _bringup_on_spawn_exit(event, context):
         if event.returncode == 0:
-            return [bridge, covariance_injector, camera_compressor, ekf, safety]
+            actions = [bridge, covariance_injector, camera_compressor, ekf, safety]
+            if localize_enabled:
+                actions.append(localize)
+            if navigate_enabled:
+                actions.append(navigate)
+            return actions
         return [
             LogInfo(
                 msg=(
@@ -294,12 +347,16 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'world',
-            default_value='apartment_world',
+            default_value='house',
             description=(
                 "World to load, by worlds/<world>.sdf filename stem "
-                "(must equal that file's <world name>): 'apartment_world' "
-                "(default, hand-authored 3-room layout) or 'house' "
-                '(adopted multi-room apartment, see house.sdf header).'
+                "(must equal that file's <world name>): 'house' (default "
+                'and only supported world - 6-room layout, see house.sdf '
+                'header). The original apartment_world.sdf placeholder '
+                'world was removed after the map/world mismatch it caused '
+                '(see robot/localization/CLAUDE.md); this arg is kept so a '
+                'future additional world can be added without a launch API '
+                'change.'
             ),
         ),
         DeclareLaunchArgument(
@@ -328,6 +385,24 @@ def generate_launch_description():
                 'JPEG quality (0-100) for the always-on /camera/image_raw/'
                 'compressed side channel published by camera_compressor. '
                 'Does not affect the raw /camera/image_raw feed.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'localize', default_value='false',
+            description=(
+                'true = also include localize.launch.py (map_server + amcl '
+                "against M5 Phase 2's local map cache). false (default) = "
+                'no map-frame localization, since a map artifact is '
+                'deploy-time state that will not always be present.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'navigate', default_value='false',
+            description=(
+                'true = also include navigate.launch.py (Nav2 planner/'
+                'controller/behavior/BT nodes + behavior_supervisor, M7). '
+                'Requires localize:=true - fails loudly otherwise. false '
+                '(default) = no Nav2 goal navigation.'
             ),
         ),
         OpaqueFunction(function=launch_setup),

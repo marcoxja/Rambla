@@ -1,12 +1,20 @@
-// Camera feed is a plain <img src="/camera/stream"> MJPEG stream (see
-// server.py) - no JS decode/render logic needed. This file only handles
-// the "feed looks frozen" edge case: if the <img> errors (e.g. backend
-// restarted), retry by re-setting src after a short delay.
+// Camera feed is now binary JPEG frames over the relay's video WebSocket
+// (relay-protocol.md "Video-channel framing") instead of an MJPEG
+// multipart `<img src="/camera/stream">` stream - the gateway no longer
+// runs an HTTP server at all (M4). Each frame is a Blob; render it by
+// pointing the <img> at an object URL and revoking the previous one once
+// the new frame has loaded, so we never hold more than two URLs live.
 function initCameraFeed() {
   const img = document.getElementById('camera-feed');
-  img.addEventListener('error', () => {
-    setTimeout(() => {
-      img.src = `/camera/stream?retry=${Date.now()}`;
-    }, 1000);
+  let previousUrl = null;
+
+  RamblaWS.onVideoFrame((blob) => {
+    const url = URL.createObjectURL(blob);
+    const toRevoke = previousUrl;
+    img.onload = () => {
+      if (toRevoke) URL.revokeObjectURL(toRevoke);
+    };
+    previousUrl = url;
+    img.src = url;
   });
 }
